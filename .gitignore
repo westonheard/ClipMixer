@@ -3,3 +3,6 @@ bin/
 obj/
 *.user
 *.suo
+
+# too big for github
+ClipMixer/tools/
