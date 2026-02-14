@@ -83,10 +83,17 @@
                 <TextBlock x:Name="ClipInfoText" Foreground="{StaticResource DimFg}" Margin="0,2,0,0"/>
             </StackPanel>
 
-            <!-- prev/next -->
+            <Border Grid.Row="1" Background="Black" CornerRadius="6" MouseLeftButtonDown="videoMouseLeftButtonDown">
+                <local:MpvHost x:Name="Mpv"/>
+            </Border>
+
+            <!-- play buttons -->
             <WrapPanel Grid.Row="4" Margin="0,6,0,0" VerticalAlignment="Center">
                 <Button Click="prevClick" ToolTip="Previous clip" Padding="10,5">&lt; Prev</Button>
+                <Button x:Name="PlayPauseButton" Margin="6,0,0,0" Width="80" Click="playPauseClick">Play</Button>
                 <Button Margin="6,0,0,0" Click="nextClick" ToolTip="Next clip / skip" Padding="10,5">Next &gt;</Button>
+
+                <TextBlock x:Name="TimeText" Margin="14,0,0,0" VerticalAlignment="Center" FontFamily="Consolas" Width="200"/>
             </WrapPanel>
 
             <!-- status -->

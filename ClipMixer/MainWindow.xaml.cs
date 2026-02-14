@@ -27,12 +27,20 @@ namespace ClipMixer{
         private ClipEntry? current;
         private MediaInfo? info;
         private int loadToken;
+        private double durationSec;
+        private double playSec;
+        private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
 
         public MainWindow(){
             InitializeComponent();
 
             ClipList.ItemsSource = clips;
+
+            //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
+            Mpv.TimePosChanged += t => Dispatcher.BeginInvoke(() => onTimePos(t));
+            Mpv.DurationChanged += d => Dispatcher.BeginInvoke(() => onMpvDuration(d));
+            Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
 
             Loaded += onLoaded;
             Closing += onClosing;
@@ -42,8 +50,12 @@ namespace ClipMixer{
         }
 
         private void onLoaded(object sender, RoutedEventArgs e){
-            //open a folder passed on the command line
+            //give the video host a sec to make the player, then report problems / reopen last folder
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => {
+                if(Mpv.InitError != null){
+                    status("Video preview unavailable: " + Mpv.InitError);
+                }
+
                 string[] args = Environment.GetCommandLineArgs();
                 string? arg = args.Length > 1 ? args[1] : null;
                 if(arg != null && Directory.Exists(arg)){
@@ -87,7 +99,7 @@ namespace ClipMixer{
 
             clips.Clear();
             allClips.Clear();
-            clearCurrent();
+            await clearCurrentAsync();
             ScanText.Text = "Scanning...";
 
             bool recurse = SubfoldersCheck.IsChecked == true;
@@ -173,6 +185,15 @@ namespace ClipMixer{
             int token = ++loadToken;
             current = entry;
             this.info = null;
+            durationSec = 0;
+            playSec = 0;
+            probeDone = false;
+
+            //dont keep showing the old clip under the new name while probing
+            if(Mpv.LoadedPath != null && !string.Equals(Mpv.LoadedPath, entry.FullPath, StringComparison.OrdinalIgnoreCase)){
+                _ = Mpv.stopAsync();
+            }
+            TimeText.Text = "";
 
             FileText.Text = entry.FileName;
             FileText.ToolTip = entry.FullPath;
@@ -187,7 +208,9 @@ namespace ClipMixer{
             if(token != loadToken){return;}
 
             this.info = info;
+            probeDone = true;
             if(info != null){
+                if(info.DurationSeconds > 0){setDuration(info.DurationSeconds);}
                 List<string> bits = new List<string>();
                 if(info.Width > 0){bits.Add($"{info.Width}x{info.Height}");}
                 if(info.VideoCodec != null){bits.Add(info.VideoCodec);}
@@ -200,17 +223,24 @@ namespace ClipMixer{
                 status(entry.HasNote ? entry.Note!
                     : "Hit Next for the next clip.");
             }
+
+            Mpv.load(entry.FullPath, null, false);
         }
 
-        private void clearCurrent(){
+        private async Task clearCurrentAsync(){
             loadToken++;
+            probeDone = false;
             current = null;
             info = null;
+            durationSec = 0;
+            playSec = 0;
             suppressSelection = true;
             ClipList.SelectedItem = null;
             suppressSelection = false;
             FileText.Text = "No clip selected";
             ClipInfoText.Text = "";
+            TimeText.Text = "";
+            await Mpv.stopAsync();
         }
 
         private void nextClick(object sender, RoutedEventArgs e) => navigate(+1);
@@ -225,6 +255,35 @@ namespace ClipMixer{
                 return;
             }
             selectClip(clips[target]);
+        }
+
+        //-------- mpv callbacks (already on ui thread) --------
+
+        private void onTimePos(double t){
+            if(current == null){return;}
+            double dur = durationSec > 0 ? durationSec : t;
+            playSec = Math.Clamp(t, 0, Math.Max(0.001, dur));
+            TimeText.Text = $"{FfmpegRunner.formatTs(playSec)} / {FfmpegRunner.formatTs(durationSec)}";
+        }
+
+        private void onMpvDuration(double d){
+            //ffprobes duration wins, mpvs only gets used if probing failed
+            if(current != null && probeDone && d > 0 && durationSec <= 0 &&
+                string.Equals(Mpv.LoadedPath, current.FullPath, StringComparison.OrdinalIgnoreCase)){
+                setDuration(d);
+            }
+        }
+
+        private void setDuration(double d){
+            durationSec = d;
+        }
+
+        private void playPauseClick(object sender, RoutedEventArgs e) => togglePlay();
+        private void videoMouseLeftButtonDown(object sender, MouseButtonEventArgs e) => togglePlay();
+
+        private void togglePlay(){
+            if(current == null){return;}
+            Mpv.togglePause();
         }
 
         private void onClosing(object? sender, CancelEventArgs e){
