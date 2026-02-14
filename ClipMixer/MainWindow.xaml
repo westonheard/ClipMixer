@@ -7,9 +7,90 @@
         Background="{StaticResource WindowBg}"
         Foreground="{StaticResource TextFg}">
 
-    <Grid Margin="10">
-        <Border Style="{StaticResource Panel}">
-            <TextBlock x:Name="StatusText" Text="nothing here yet"/>
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </Window.Resources>
+
+    <Grid x:Name="RootGrid" Focusable="True" FocusVisualStyle="{x:Null}" Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="330" MinWidth="240"/>
+            <ColumnDefinition Width="8"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- left side, clip list + queue -->
+        <Border Grid.Column="0" Style="{StaticResource Panel}">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <DockPanel LastChildFill="False">
+                        <Button DockPanel.Dock="Left" Click="openFolderClick" Padding="12,5"
+                                ToolTip="Open a clip folder">Open folder...</Button>
+                        <Button DockPanel.Dock="Left" Margin="6,0,0,0" Click="refreshClick" Padding="10,5"
+                                ToolTip="Rescan folder">Refresh</Button>
+                    </DockPanel>
+                    <TextBlock x:Name="FolderText" Margin="0,8,0,0" Foreground="{StaticResource DimFg}" TextTrimming="CharacterEllipsis"
+                               Text="No folder open"/>
+                    <TextBlock x:Name="ScanText" Margin="0,6,0,6" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                </StackPanel>
+
+                <ListBox x:Name="ClipList" Grid.Row="1" SelectionMode="Single"
+                         SelectionChanged="clipListSelectionChanged"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         VirtualizingPanel.IsVirtualizing="True">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type local:ClipEntry}">
+                            <StackPanel x:Name="Item" Margin="2,3">
+                                <DockPanel>
+                                    <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                                <TextBlock Foreground="{StaticResource DimFg}" FontSize="11" TextTrimming="CharacterEllipsis">
+                                    <Run Text="{Binding DurationText, Mode=OneWay}"/><Run Text="   "/><Run Text="{Binding SizeText, Mode=OneWay}"/><Run Text="   "/><Run Text="{Binding DateText, Mode=OneWay}"/><Run Text="   "/><Run Text="{Binding Folder, Mode=OneWay}"/>
+                                </TextBlock>
+                                <TextBlock Text="{Binding Note}" Foreground="{StaticResource WarnFg}" FontSize="11" TextWrapping="Wrap"
+                                           Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
         </Border>
+
+        <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="Transparent" Focusable="False"/>
+
+        <!-- right side, player + editing -->
+        <Grid Grid.Column="2">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*" MinHeight="160"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <StackPanel Grid.Row="0" Margin="0,0,0,8">
+                <TextBlock x:Name="FileText" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Text="No clip selected"/>
+                <TextBlock x:Name="ClipInfoText" Foreground="{StaticResource DimFg}" Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <!-- prev/next -->
+            <WrapPanel Grid.Row="4" Margin="0,6,0,0" VerticalAlignment="Center">
+                <Button Click="prevClick" ToolTip="Previous clip" Padding="10,5">&lt; Prev</Button>
+                <Button Margin="6,0,0,0" Click="nextClick" ToolTip="Next clip / skip" Padding="10,5">Next &gt;</Button>
+            </WrapPanel>
+
+            <!-- status -->
+            <StackPanel Grid.Row="7" Margin="0,8,0,0">
+                <TextBlock x:Name="StatusText" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Grid>
     </Grid>
 </Window>
