@@ -36,6 +36,8 @@
                     </DockPanel>
                     <TextBlock x:Name="FolderText" Margin="0,8,0,0" Foreground="{StaticResource DimFg}" TextTrimming="CharacterEllipsis"
                                Text="No folder open"/>
+                    <CheckBox x:Name="SubfoldersCheck" Margin="0,6,0,0" Content="Include subfolders" IsChecked="True"
+                              Checked="subfoldersChanged" Unchecked="subfoldersChanged"/>
                     <TextBlock x:Name="ScanText" Margin="0,6,0,6" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 </StackPanel>
 

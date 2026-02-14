@@ -70,6 +70,11 @@ namespace ClipMixer{
             if(folder != null){_ = openFolderAsync(folder, current?.FullPath);}
         }
 
+        private void subfoldersChanged(object sender, RoutedEventArgs e){
+            if(!IsLoaded){return;}
+            if(folder != null){_ = openFolderAsync(folder, current?.FullPath);}
+        }
+
         private async Task openFolderAsync(string folder, string? selectPath){
             if(!Directory.Exists(folder)){status("Folder not found: " + folder); return;}
 
@@ -85,10 +90,11 @@ namespace ClipMixer{
             clearCurrent();
             ScanText.Text = "Scanning...";
 
+            bool recurse = SubfoldersCheck.IsChecked == true;
             bool autoSelected = false;
 
             try{
-                ScanSummary summary = await ClipLibrary.scanAsync(folder, runner,
+                ScanSummary summary = await ClipLibrary.scanAsync(folder, recurse, runner,
                     entry => Dispatcher.BeginInvoke(() => {
                         if(cts.IsCancellationRequested){return;}
                         addClip(entry);

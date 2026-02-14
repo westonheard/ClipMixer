@@ -51,8 +51,9 @@ namespace ClipMixer{
         public static readonly HashSet<string> VideoExtensions =
             new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".mov", ".m4v", ".mkv" };
 
-        public static List<string> enumerateVideos(string folder){
+        public static List<string> enumerateVideos(string folder, bool recurse){
             EnumerationOptions opts = new EnumerationOptions{
+                RecurseSubdirectories = recurse,
                 IgnoreInaccessible = true,
                 AttributesToSkip = FileAttributes.Hidden | FileAttributes.System,
                 ReturnSpecialDirectories = false,
@@ -64,11 +65,11 @@ namespace ClipMixer{
 
         //onClip fires from a worker thread per clip so the list fills in while its still scanning
         public static async Task<ScanSummary> scanAsync(
-            string folder, FfmpegRunner runner,
+            string folder, bool recurse, FfmpegRunner runner,
             Action<ClipEntry> onClip, Action<int, int>? onProgress, CancellationToken ct){
             ScanSummary summary = new ScanSummary();
 
-            List<string> all = await Task.Run(() => enumerateVideos(folder), ct).ConfigureAwait(false);
+            List<string> all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
 
             List<string> candidates = all
                 .OrderBy(p => Path.GetRelativePath(folder, p), StringComparer.OrdinalIgnoreCase)
