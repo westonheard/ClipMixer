@@ -79,6 +79,75 @@ namespace ClipMixer{
             return info;
         }
 
+        //last keyframe at/before sec, lossless cut can only start clean on one. times relative to startTime like mpv/-ss, ffprobe packet times are absolute
+        //also gives the dts, w/ b-frames dts is earlier than pts and ffmpegs output seek drops packets by dts
+        public async Task<(double Pts, double? Dts)> getKeyframeInfoAsync(string path, double sec, double startTime = 0, CancellationToken ct = default){
+            if(sec <= 0){return (0, 0);}
+            double abs = sec + startTime;
+
+            //try a window before the time first (cheap), then scan from the start if nothing found
+            foreach(double windowStart in new[] { sec - 30, double.NegativeInfinity }){
+                double absStart = windowStart + startTime;
+                string intervals = windowStart > 0 && absStart > 0
+                    ? $"{FfmpegRunner.sec(absStart)}%{FfmpegRunner.sec(abs + 0.5)}"
+                    : $"%{FfmpegRunner.sec(abs + 0.5)}";
+
+                ProcessResult res = await runAsync(FfprobePath, new[]
+                {
+                    "-hide_banner", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-read_intervals", intervals,
+                    "-show_entries", "packet=pts_time,dts_time,flags",
+                    "-of", "csv=p=0",
+                    "-i", path
+                }, null, null, ct, TimeSpan.FromSeconds(120));
+
+                if(res.ExitCode != 0){
+                    throw new Exception($"ffprobe keyframe scan failed (exit {res.ExitCode}): {firstLines(res.StdErr, 5)}");
+                }
+
+                //lines look like "3.236567,3.236567,K__", dts can be N/A
+                double best = -1;
+                double? bestDts = null;
+                foreach(string raw in res.StdOut.Split('\n')){
+                    string[] parts = raw.Trim().Split(',');
+                    if(parts.Length < 3 || !parts[2].Contains('K')){continue;}
+                    if(!double.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out double ptsAbs)){continue;}
+                    double pts = ptsAbs - startTime;
+                    if(pts <= sec + 0.0005 && pts > best){//little bit of slack, ffprobe rounds pts to microseconds
+                        best = pts;
+                        bestDts = double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double dts) ? dts - startTime : null;
+                    }
+                }
+
+                if(best >= 0){return (best, bestDts);}
+                if(double.IsNegativeInfinity(windowStart)){break;}
+            }
+
+            return (0, 0);
+        }
+
+        //caller has to pass -progress pipe:1 already, progress is 0..1 off expectedDuration. doesnt throw on non zero exit
+        public Task<ProcessResult> runFfmpegAsync(
+            IReadOnlyList<string> args,
+            double expectedDuration,
+            Action<double>? onProgress,
+            Action<double>? onOutTime,
+            Action<string>? onStderrLine,
+            CancellationToken ct){
+            return runAsync(FfmpegPath, args, line => {
+                //-progress gives key=value lines, out_time_us is microseconds (can be N/A)
+                if(line.StartsWith("out_time_us=", StringComparison.Ordinal) &&
+                    long.TryParse(line.AsSpan(12), NumberStyles.Integer, CultureInfo.InvariantCulture, out long us) && us >= 0){
+                    double t = us / 1_000_000.0;
+                    onOutTime?.Invoke(t);
+                    if(onProgress != null && expectedDuration > 0){
+                        onProgress(Math.Clamp(t / expectedDuration, 0, 1));
+                    }
+                }
+            }, onStderrLine, ct, null);
+        }
+
         public static async Task<ProcessResult> runAsync(
             string exe,
             IEnumerable<string> args,

@@ -44,12 +44,17 @@ namespace ClipMixer{
     public sealed class ScanSummary{
         public int Candidates;
         public int Untrimmed;
+        public int AlreadyTrimmed;
     }
 
     public static class ClipLibrary{
-        //todo: maybe add .avi/.webm too
+        //todo: maybe add .avi/.webm too, havent tested those w/ the trim stuff
         public static readonly HashSet<string> VideoExtensions =
             new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".mov", ".m4v", ".mkv" };
+
+        //trimmed copies get saved as ..._trimmed.mp4, skip those
+        public static bool looksTrimmedByName(string path) =>
+            Path.GetFileNameWithoutExtension(path).EndsWith("_trimmed", StringComparison.OrdinalIgnoreCase);
 
         public static List<string> enumerateVideos(string folder, bool recurse){
             EnumerationOptions opts = new EnumerationOptions{
@@ -72,9 +77,11 @@ namespace ClipMixer{
             List<string> all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
 
             List<string> candidates = all
+                .Where(p => !looksTrimmedByName(p))
                 .OrderBy(p => Path.GetRelativePath(folder, p), StringComparer.OrdinalIgnoreCase)
                 .ToList();
             summary.Candidates = candidates.Count;
+            summary.AlreadyTrimmed = all.Count(looksTrimmedByName);
 
             int done = 0;
             onProgress?.Invoke(0, candidates.Count);

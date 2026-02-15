@@ -18,11 +18,15 @@ using System.Windows.Threading;
 namespace ClipMixer{
     public partial class MainWindow : Window{
         private readonly FfmpegRunner runner = FfmpegRunner.createDefault();
+        private readonly ClipProcessor processor;
 
         private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows
         private readonly List<ClipEntry> allClips = new();//every clip found
+        private int oldNamedExports;//"_trimmed" copies, never listed
         private string? folder;
         private CancellationTokenSource? scanCts;
+
+        private bool trimming;
 
         private ClipEntry? current;
         private MediaInfo? info;
@@ -42,6 +46,8 @@ namespace ClipMixer{
             InitializeComponent();
 
             ClipList.ItemsSource = clips;
+
+            processor = new ClipProcessor(runner, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipMixer", "logs"));
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
             Mpv.TimePosChanged += t => {
@@ -111,6 +117,7 @@ namespace ClipMixer{
 
             clips.Clear();
             allClips.Clear();
+            oldNamedExports = 0;
             await clearCurrentAsync();
             ScanText.Text = "Scanning...";
 
@@ -143,10 +150,11 @@ namespace ClipMixer{
 
                 if(current == null && clips.Count > 0){selectClip(clips.FirstOrDefault(c => !c.IsTrimmed) ?? clips[0]);}
 
+                oldNamedExports = Math.Max(0, summary.AlreadyTrimmed - allClips.Count(c => c.IsTrimmed));
                 updateCounts();
 
                 if(!allClips.Any(c => !c.IsTrimmed)){
-                    status(summary.Candidates == 0
+                    status(summary.Candidates == 0 && summary.AlreadyTrimmed == 0
                         ? "No video clips (.mp4 .mov .m4v .mkv) found in this folder."
                         : "Nothing left to review in this folder.");
                 }
@@ -176,7 +184,10 @@ namespace ClipMixer{
 
         private void updateCounts(){
             int toReview = allClips.Count(c => !c.IsTrimmed);
-            ScanText.Text = folder == null ? "" : toReview == 1 ? "1 clip to review" : $"{toReview} clips to review";
+            int trimmed = allClips.Count(c => c.IsTrimmed) + oldNamedExports;
+            List<string> parts = new List<string> { toReview == 1 ? "1 clip to review" : $"{toReview} clips to review" };
+            if(trimmed > 0){parts.Add($"{trimmed} already trimmed");}
+            ScanText.Text = folder == null ? "" : string.Join("  -  ", parts);
         }
 
         //-------- clip selection / loading --------
@@ -211,6 +222,7 @@ namespace ClipMixer{
             FileText.Text = entry.FileName;
             FileText.ToolTip = entry.FullPath;
             ClipInfoText.Text = entry.Folder;
+            CutInfoText.Text = "";
             updateMarkerTexts();
             updateTimelineVisuals();
 
@@ -236,10 +248,11 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
-                    : "Set In and Out, or hit Next to skip.");
+                    : "Set In and Out, then hit Trim. Next skips it.");
             }
 
-            Mpv.load(entry.FullPath, null, false);
+            Mpv.load(entry.FullPath, null, AutoPlayCheck.IsChecked != true);
+            updateCutInfo();
         }
 
         private async Task clearCurrentAsync(){
@@ -254,10 +267,24 @@ namespace ClipMixer{
             suppressSelection = false;
             FileText.Text = "No clip selected";
             ClipInfoText.Text = "";
+            CutInfoText.Text = "";
             TimeText.Text = "";
             updateMarkerTexts();
             updateTimelineVisuals();
             await Mpv.stopAsync();
+        }
+
+        private async Task goToIndexAfterRemovalAsync(int index){
+            if(!clips.Any(c => !c.IsTrimmed)){
+                await clearCurrentAsync();
+                status("All clips in this folder are reviewed.");
+                return;
+            }
+            int start = Math.Clamp(index, 0, clips.Count - 1);
+            ClipEntry next = clips.Skip(start).FirstOrDefault(c => !c.IsTrimmed)
+                       ?? clips.Take(start).LastOrDefault(c => !c.IsTrimmed)
+                       ?? clips[start];
+            if(!ReferenceEquals(next, current)){selectClipForce(next);}
         }
 
         private void nextClick(object sender, RoutedEventArgs e) => navigate(+1);
@@ -338,6 +365,7 @@ namespace ClipMixer{
         private void markersChanged(){
             updateMarkerTexts();
             updateTimelineVisuals();
+            updateCutInfo();
         }
 
         private void updateMarkerTexts(){
@@ -359,6 +387,71 @@ namespace ClipMixer{
                 return;
             }
             if(ReferenceEquals(tb, InText)){setIn(ts.TotalSeconds);}else{setOut(ts.TotalSeconds);}
+        }
+
+        private void updateCutInfo(){
+            if(current == null || durationSec <= 0){CutInfoText.Text = ""; return;}
+
+            if(inSec <= 0.05 && outSec >= durationSec - 0.05){
+                CutInfoText.Text = "In/Out cover the whole clip. Set In and/or Out to trim it.";
+                return;
+            }
+            CutInfoText.Text = "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
+        }
+
+        //-------- trim --------
+
+        private void trimClick(object sender, RoutedEventArgs e) => trimCurrent();
+
+        private void trimCurrent(){
+            ClipEntry? entry = current;
+            if(entry == null){status("No clip selected."); return;}
+            if(trimming){status("Still trimming the last one, hang on."); return;}
+            if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
+            if(outSec - inSec < 0.1){status("Out must be after In."); return;}
+            if(inSec <= 0.05 && outSec >= durationSec - 0.05){
+                status("In/Out cover the whole clip - nothing to trim. Set In / Out first, or press Next to skip.");
+                return;
+            }
+
+            TrimRequest req = new TrimRequest
+            {
+                SourcePath = entry.FullPath,
+                InSec = inSec,
+                OutSec = outSec,
+            };
+
+            _ = runTrimAsync(entry, req);
+        }
+
+        private async Task runTrimAsync(ClipEntry entry, TrimRequest req){
+            trimming = true;
+            TrimButton.IsEnabled = false;
+            try{
+                TrimResult result = await Task.Run(() => processor.trimAsync(req,
+                    (stage, p) => Dispatcher.BeginInvoke(() => status(p > 0 && p < 1 ? $"{stage} {p:P0}" : $"{stage}...")),
+                    CancellationToken.None));
+                status($"Trimmed {entry.FileName} to {formatDur(result.OutputDurationSec)}, saved as a _trimmed copy next to the original.");
+
+                int idx = clips.IndexOf(entry);
+                removeClip(entry.FullPath);
+                updateCounts();
+                await goToIndexAfterRemovalAsync(idx);
+            }catch(Exception ex){
+                string? log = (ex as ClipJobException)?.LogPath;
+                status($"Trim failed for {entry.FileName}: {ex.Message}" + (log != null ? $"  (log: {log})" : ""));
+            }finally{
+                trimming = false;
+                TrimButton.IsEnabled = true;
+            }
+        }
+
+        private void selectClipForce(ClipEntry entry){
+            suppressSelection = true;
+            ClipList.SelectedItem = entry;
+            suppressSelection = false;
+            ClipList.ScrollIntoView(entry);
+            _ = loadClipAsync(entry);
         }
 
         private void onClosing(object? sender, CancelEventArgs e){
