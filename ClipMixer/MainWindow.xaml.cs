@@ -34,13 +34,22 @@ namespace ClipMixer{
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
 
+        //mpv time updates get squashed into one ui update at a time
+        private double latestTime;
+        private int timeUpdatePending;
+
         public MainWindow(){
             InitializeComponent();
 
             ClipList.ItemsSource = clips;
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
-            Mpv.TimePosChanged += t => Dispatcher.BeginInvoke(() => onTimePos(t));
+            Mpv.TimePosChanged += t => {
+                latestTime = t;
+                if(Interlocked.Exchange(ref timeUpdatePending, 1) == 0){
+                    Dispatcher.BeginInvoke(() => {Interlocked.Exchange(ref timeUpdatePending, 0); onTimePos(latestTime);});
+                }
+            };
             Mpv.DurationChanged += d => Dispatcher.BeginInvoke(() => onMpvDuration(d));
             Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
 
