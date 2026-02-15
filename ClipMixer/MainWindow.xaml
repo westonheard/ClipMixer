@@ -9,6 +9,41 @@
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+
+        <!-- in/out marker handle -->
+        <Style x:Key="MarkerThumbStyle" TargetType="Thumb">
+            <Setter Property="Width" Value="16"/>
+            <Setter Property="Height" Value="38"/>
+            <Setter Property="Cursor" Value="SizeWE"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid Background="Transparent">
+                            <Polygon Points="0,0 16,0 8,10" Fill="{TemplateBinding Foreground}"/>
+                            <Rectangle Width="2" Height="28" Fill="{TemplateBinding Foreground}" HorizontalAlignment="Center" Margin="0,10,0,0"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- playhead -->
+        <Style x:Key="PlayheadThumbStyle" TargetType="Thumb">
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="Height" Value="44"/>
+            <Setter Property="Cursor" Value="SizeWE"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid Background="Transparent">
+                            <Rectangle Width="2" Height="44" Fill="White" HorizontalAlignment="Center"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="RootGrid" Focusable="True" FocusVisualStyle="{x:Null}" Margin="10">
@@ -87,13 +122,36 @@
                 <local:MpvHost x:Name="Mpv"/>
             </Border>
 
-            <!-- play buttons -->
+            <!-- timeline -->
+            <Canvas x:Name="Timeline" Grid.Row="2" Height="52" Margin="0,8,0,0" Background="Transparent" ClipToBounds="False"
+                    SizeChanged="timelineSizeChanged" MouseLeftButtonDown="timelineMouseLeftButtonDown">
+                <Rectangle x:Name="TimelineTrack" Height="6" RadiusX="3" RadiusY="3" Fill="#55555F"/>
+                <Rectangle x:Name="TimelineSelection" Height="6" RadiusX="3" RadiusY="3" Fill="#4A9EFF" Opacity="0.85"/>
+                <Thumb x:Name="InThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#7CD992" ToolTip="In"
+                       DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="inThumbDragDelta"/>
+                <Thumb x:Name="OutThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#FF7C7C" ToolTip="Out"
+                       DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="outThumbDragDelta"/>
+                <Thumb x:Name="PlayheadThumb" Style="{StaticResource PlayheadThumbStyle}"
+                       DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="playheadThumbDragDelta"/>
+            </Canvas>
+
+            <!-- play buttons + in/out -->
             <WrapPanel Grid.Row="4" Margin="0,6,0,0" VerticalAlignment="Center">
                 <Button Click="prevClick" ToolTip="Previous clip" Padding="10,5">&lt; Prev</Button>
                 <Button x:Name="PlayPauseButton" Margin="6,0,0,0" Width="80" Click="playPauseClick">Play</Button>
                 <Button Margin="6,0,0,0" Click="nextClick" ToolTip="Next clip / skip" Padding="10,5">Next &gt;</Button>
 
                 <TextBlock x:Name="TimeText" Margin="14,0,0,0" VerticalAlignment="Center" FontFamily="Consolas" Width="200"/>
+
+                <TextBlock Text="In" Margin="8,0,6,0" VerticalAlignment="Center" Foreground="#7CD992" FontWeight="Bold"/>
+                <TextBox x:Name="InText" Width="96" VerticalContentAlignment="Center" FontFamily="Consolas" LostFocus="inOutTextLostFocus"/>
+                <Button Margin="4,0,0,0" Click="setInClick" ToolTip="Set In at playhead" Padding="8,5">Set</Button>
+
+                <TextBlock Text="Out" Margin="14,0,6,0" VerticalAlignment="Center" Foreground="#FF7C7C" FontWeight="Bold"/>
+                <TextBox x:Name="OutText" Width="96" VerticalContentAlignment="Center" FontFamily="Consolas" LostFocus="inOutTextLostFocus"/>
+                <Button Margin="4,0,0,0" Click="setOutClick" ToolTip="Set Out at playhead" Padding="8,5">Set</Button>
+
+                <TextBlock x:Name="KeepText" Margin="14,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
             </WrapPanel>
 
             <!-- status -->

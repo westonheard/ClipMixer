@@ -28,7 +28,9 @@ namespace ClipMixer{
         private MediaInfo? info;
         private int loadToken;
         private double durationSec;
-        private double playSec;
+        private double inSec, outSec, playSec;
+        private bool outUserSet;
+        private bool draggingPlayhead;
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
 
@@ -45,6 +47,7 @@ namespace ClipMixer{
             Loaded += onLoaded;
             Closing += onClosing;
 
+            updateMarkerTexts();
             updateCounts();
             status("Open a folder of clips to begin.");
         }
@@ -186,7 +189,8 @@ namespace ClipMixer{
             current = entry;
             this.info = null;
             durationSec = 0;
-            playSec = 0;
+            inSec = outSec = playSec = 0;
+            outUserSet = false;
             probeDone = false;
 
             //dont keep showing the old clip under the new name while probing
@@ -198,6 +202,8 @@ namespace ClipMixer{
             FileText.Text = entry.FileName;
             FileText.ToolTip = entry.FullPath;
             ClipInfoText.Text = entry.Folder;
+            updateMarkerTexts();
+            updateTimelineVisuals();
 
             MediaInfo? info = null;
             try{
@@ -221,7 +227,7 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
-                    : "Hit Next for the next clip.");
+                    : "Set In and Out, or hit Next to skip.");
             }
 
             Mpv.load(entry.FullPath, null, false);
@@ -233,13 +239,15 @@ namespace ClipMixer{
             current = null;
             info = null;
             durationSec = 0;
-            playSec = 0;
+            inSec = outSec = playSec = 0;
             suppressSelection = true;
             ClipList.SelectedItem = null;
             suppressSelection = false;
             FileText.Text = "No clip selected";
             ClipInfoText.Text = "";
             TimeText.Text = "";
+            updateMarkerTexts();
+            updateTimelineVisuals();
             await Mpv.stopAsync();
         }
 
@@ -264,6 +272,7 @@ namespace ClipMixer{
             double dur = durationSec > 0 ? durationSec : t;
             playSec = Math.Clamp(t, 0, Math.Max(0.001, dur));
             TimeText.Text = $"{FfmpegRunner.formatTs(playSec)} / {FfmpegRunner.formatTs(durationSec)}";
+            if(!draggingPlayhead){updatePlayheadVisual();}
         }
 
         private void onMpvDuration(double d){
@@ -276,6 +285,11 @@ namespace ClipMixer{
 
         private void setDuration(double d){
             durationSec = d;
+            if(!outUserSet || outSec <= 0 || outSec > d){outSec = d;}
+            inSec = Math.Clamp(inSec, 0, d);
+            if(inSec >= outSec){inSec = 0;}
+            updateMarkerTexts();
+            updateTimelineVisuals();
         }
 
         private void playPauseClick(object sender, RoutedEventArgs e) => togglePlay();
@@ -286,8 +300,150 @@ namespace ClipMixer{
             Mpv.togglePause();
         }
 
+        private void seekTo(double sec){
+            if(current == null){return;}
+            playSec = Math.Clamp(sec, 0, Math.Max(0, durationSec));
+            updatePlayheadVisual();
+            Mpv.seek(playSec);
+        }
+
+        private void setInClick(object sender, RoutedEventArgs e) => setIn(Mpv.getTimePosSeconds());
+        private void setOutClick(object sender, RoutedEventArgs e) => setOut(Mpv.getTimePosSeconds());
+
+        private void setIn(double t){
+            if(current == null || durationSec <= 0){return;}
+            inSec = Math.Clamp(t, 0, Math.Max(0, durationSec - 0.1));
+            if(inSec >= outSec - 0.05){outSec = durationSec; outUserSet = false;}//in past out, so out goes back to the end
+            markersChanged();
+        }
+
+        private void setOut(double t){
+            if(current == null || durationSec <= 0){return;}
+            outSec = Math.Clamp(t, 0, durationSec);
+            outUserSet = true;
+            if(outSec <= inSec + 0.05){inSec = 0;}//out before in, in goes back to start
+            if(outSec < 0.1){outSec = durationSec; outUserSet = false;}
+            markersChanged();
+        }
+
+        private void markersChanged(){
+            updateMarkerTexts();
+            updateTimelineVisuals();
+        }
+
+        private void updateMarkerTexts(){
+            InText.Text = FfmpegRunner.formatTs(inSec);
+            OutText.Text = FfmpegRunner.formatTs(outSec);
+            KeepText.Text = durationSec > 0 ? $"Keep {formatDur(outSec - inSec)} of {formatDur(durationSec)}" : "";
+        }
+
+        private void inOutTextLostFocus(object sender, RoutedEventArgs e) => commitTextBox((TextBox)sender);
+
+        private void commitTextBox(TextBox tb){
+            if(current == null || durationSec <= 0){updateMarkerTexts(); return;}
+            TimeSpan ts;
+            bool ok;
+            try{ok = FfmpegRunner.tryParseTs(tb.Text, out ts);}catch{ok = false; ts = TimeSpan.Zero;}
+            if(!ok){
+                status($"'{tb.Text}' isn't a valid time. Use 1:23.5, 00:01:23.500 or 83.5");
+                updateMarkerTexts();
+                return;
+            }
+            if(ReferenceEquals(tb, InText)){setIn(ts.TotalSeconds);}else{setOut(ts.TotalSeconds);}
+        }
+
         private void onClosing(object? sender, CancelEventArgs e){
             scanCts?.Cancel();
+        }
+
+        //-------- timeline --------
+
+        private const double TimelinePad = 14;
+        private const double TrackTop = 30;
+
+        private double DurationSeconds => durationSec;
+        private double TrackLeft => TimelinePad;
+        private double TrackRight => Math.Max(TrackLeft + 1, Timeline.ActualWidth - TimelinePad);
+        private double TrackWidth => TrackRight - TrackLeft;
+
+        private double xFromTime(double sec) => TrackLeft + (Math.Clamp(sec, 0, DurationSeconds) / DurationSeconds) * TrackWidth;
+        private double timeFromX(double x) => Math.Clamp((x - TrackLeft) / Math.Max(1, TrackWidth) * DurationSeconds, 0, DurationSeconds);
+
+        private void timelineSizeChanged(object sender, SizeChangedEventArgs e) => updateTimelineVisuals();
+
+        private void timelineMouseLeftButtonDown(object sender, MouseButtonEventArgs e){
+            if(current == null || durationSec <= 0){return;}
+            seekTo(timeFromX(e.GetPosition(Timeline).X));
+        }
+
+        private void markerDragStarted(object sender, DragStartedEventArgs e){
+            if(ReferenceEquals(sender, PlayheadThumb)){draggingPlayhead = true;}
+        }
+
+        private void markerDragCompleted(object sender, DragCompletedEventArgs e){
+            draggingPlayhead = false;
+            updateTimelineVisuals();
+        }
+
+        private double thumbCenter(Thumb t, double fallbackSec){
+            double left = Canvas.GetLeft(t);
+            if(double.IsNaN(left)){left = xFromTime(fallbackSec) - t.Width / 2.0;}
+            return left + t.Width / 2.0;
+        }
+
+        private void inThumbDragDelta(object sender, DragDeltaEventArgs e){
+            if(current == null || durationSec <= 0){return;}
+            double x = Math.Clamp(thumbCenter(InThumb, inSec) + e.HorizontalChange, TrackLeft, Math.Max(TrackLeft, xFromTime(outSec) - 2));
+            inSec = Math.Min(timeFromX(x), Math.Max(0, outSec - 0.1));
+            markersChanged();
+            seekTo(inSec);
+        }
+
+        private void outThumbDragDelta(object sender, DragDeltaEventArgs e){
+            if(current == null || durationSec <= 0){return;}
+            double x = Math.Clamp(thumbCenter(OutThumb, outSec) + e.HorizontalChange, Math.Min(TrackRight, xFromTime(inSec) + 2), TrackRight);
+            outSec = Math.Max(timeFromX(x), Math.Min(durationSec, inSec + 0.1));
+            outUserSet = true;
+            markersChanged();
+            seekTo(outSec);
+        }
+
+        private void playheadThumbDragDelta(object sender, DragDeltaEventArgs e){
+            if(current == null || durationSec <= 0){return;}
+            double x = Math.Clamp(thumbCenter(PlayheadThumb, playSec) + e.HorizontalChange, TrackLeft, TrackRight);
+            seekTo(timeFromX(x));
+        }
+
+        private void updateTimelineVisuals(){
+            if(Timeline == null){return;}
+
+            Canvas.SetLeft(TimelineTrack, TrackLeft);
+            Canvas.SetTop(TimelineTrack, TrackTop);
+            TimelineTrack.Width = TrackWidth;
+
+            bool has = current != null && durationSec > 0;
+            Visibility vis = has ? Visibility.Visible : Visibility.Hidden;
+            TimelineSelection.Visibility = InThumb.Visibility = OutThumb.Visibility = PlayheadThumb.Visibility = vis;
+            if(!has){return;}
+
+            double xIn = xFromTime(inSec);
+            double xOut = xFromTime(outSec);
+            if(xOut < xIn){(xIn, xOut) = (xOut, xIn);}
+            Canvas.SetLeft(TimelineSelection, xIn);
+            Canvas.SetTop(TimelineSelection, TrackTop);
+            TimelineSelection.Width = Math.Max(0, xOut - xIn);
+
+            Canvas.SetLeft(InThumb, xIn - InThumb.Width / 2.0);
+            Canvas.SetTop(InThumb, 0);
+            Canvas.SetLeft(OutThumb, xOut - OutThumb.Width / 2.0);
+            Canvas.SetTop(OutThumb, 0);
+
+            updatePlayheadVisual();
+        }
+
+        private void updatePlayheadVisual(){
+            Canvas.SetLeft(PlayheadThumb, xFromTime(playSec) - PlayheadThumb.Width / 2.0);
+            Canvas.SetTop(PlayheadThumb, 4);
         }
 
         private void status(string msg) => StatusText.Text = msg;
