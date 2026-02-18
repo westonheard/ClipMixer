@@ -459,6 +459,12 @@ namespace ClipMixer{
         //-------- keyboard / mouse --------
 
         private void windowPreviewKeyDown(object sender, KeyEventArgs e){
+            //while typing a time only enter (commit) + escape (revert) do stuff, del/enter must never hit the clip actions from a textbox
+            if(Keyboard.FocusedElement is TextBox tb){
+                if(e.Key == Key.Enter){commitTextBox(tb); focusRoot(); e.Handled = true;}else if(e.Key == Key.Escape){updateMarkerTexts(); focusRoot(); e.Handled = true;}
+                return;
+            }
+
             ModifierKeys mods = Keyboard.Modifiers;
             if((mods & ModifierKeys.Control) != 0){
                 if(e.Key == Key.O){showOpenFolderDialog(); e.Handled = true;}
