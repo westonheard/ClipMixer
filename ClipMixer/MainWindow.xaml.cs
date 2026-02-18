@@ -64,10 +64,12 @@ namespace ClipMixer{
 
             updateMarkerTexts();
             updateCounts();
-            status("Open a folder of clips to begin.");
+            status("Open a folder of clips to begin (Ctrl+O).");
         }
 
         private void onLoaded(object sender, RoutedEventArgs e){
+            focusRoot();
+
             //give the video host a sec to make the player, then report problems / reopen last folder
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => {
                 if(Mpv.InitError != null){
@@ -248,7 +250,7 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
-                    : "Set In and Out, then hit Trim. Next skips it.");
+                    : "Set In (I) and Out (O), then Enter to trim - or N to skip.");
             }
 
             Mpv.load(entry.FullPath, null, AutoPlayCheck.IsChecked != true);
@@ -393,7 +395,7 @@ namespace ClipMixer{
             if(current == null || durationSec <= 0){CutInfoText.Text = ""; return;}
 
             if(inSec <= 0.05 && outSec >= durationSec - 0.05){
-                CutInfoText.Text = "In/Out cover the whole clip. Set In and/or Out to trim it.";
+                CutInfoText.Text = "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
                 return;
             }
             CutInfoText.Text = "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
@@ -410,7 +412,7 @@ namespace ClipMixer{
             if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
             if(outSec - inSec < 0.1){status("Out must be after In."); return;}
             if(inSec <= 0.05 && outSec >= durationSec - 0.05){
-                status("In/Out cover the whole clip - nothing to trim. Set In / Out first, or press Next to skip.");
+                status("In/Out cover the whole clip - nothing to trim. Set In (I) / Out (O) first, or press N to skip.");
                 return;
             }
 
@@ -452,6 +454,59 @@ namespace ClipMixer{
             suppressSelection = false;
             ClipList.ScrollIntoView(entry);
             _ = loadClipAsync(entry);
+        }
+
+        //-------- keyboard / mouse --------
+
+        private void windowPreviewKeyDown(object sender, KeyEventArgs e){
+            ModifierKeys mods = Keyboard.Modifiers;
+            if((mods & ModifierKeys.Control) != 0){
+                if(e.Key == Key.O){showOpenFolderDialog(); e.Handled = true;}
+                return;
+            }
+            if((mods & ModifierKeys.Alt) != 0){return;}
+            bool shift = (mods & ModifierKeys.Shift) != 0;
+
+            switch(e.Key){
+                case Key.Space: togglePlay(); break;
+                case Key.I: setIn(Mpv.getTimePosSeconds()); break;
+                case Key.O: setOut(Mpv.getTimePosSeconds()); break;
+                case Key.Left: if(current != null){Mpv.seekRelative(shift ? -1 : -5);} break;
+                case Key.Right: if(current != null){Mpv.seekRelative(shift ? 1 : 5);} break;
+                case Key.Home: seekTo(inSec); break;
+                case Key.Up: case Key.P: case Key.PageUp: navigate(-1); break;
+                case Key.Down: case Key.N: case Key.PageDown: navigate(+1); break;
+                case Key.Enter: trimCurrent(); break;
+                default:
+                    return;
+            }
+            e.Handled = true;
+        }
+
+        private void windowPreviewMouseDown(object sender, MouseButtonEventArgs e){
+            if(e.OriginalSource is DependencyObject d && findAncestor<TextBox>(d) == null){
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(focusRoot));
+            }
+        }
+
+        protected override void OnActivated(EventArgs e){
+            base.OnActivated(e);
+            if(Keyboard.FocusedElement is not TextBox){focusRoot();}
+        }
+
+        private void focusRoot(){
+            if(Keyboard.FocusedElement is TextBox tb){commitTextBox(tb);}
+            RootGrid.Focus();
+            Keyboard.Focus(RootGrid);
+        }
+
+        private static T? findAncestor<T>(DependencyObject? d) where T : DependencyObject{
+            while(d != null){
+                if(d is T t){return t;}
+                //visual vs logical tree bs, Run/text elements arent Visuals so GetParent throws on them
+                d = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
+            }
+            return null;
         }
 
         private void onClosing(object? sender, CancelEventArgs e){

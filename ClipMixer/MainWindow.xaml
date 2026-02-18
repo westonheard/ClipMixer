@@ -5,7 +5,9 @@
         Title="ClipMixer" Height="860" Width="1400" MinWidth="980" MinHeight="620"
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowBg}"
-        Foreground="{StaticResource TextFg}">
+        Foreground="{StaticResource TextFg}"
+        PreviewKeyDown="windowPreviewKeyDown"
+        PreviewMouseDown="windowPreviewMouseDown">
 
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis"/>
@@ -65,7 +67,7 @@
                 <StackPanel Grid.Row="0">
                     <DockPanel LastChildFill="False">
                         <Button DockPanel.Dock="Left" Click="openFolderClick" Padding="12,5"
-                                ToolTip="Open a clip folder">Open folder...</Button>
+                                ToolTip="Open a clip folder (Ctrl+O)">Open folder...</Button>
                         <Button DockPanel.Dock="Left" Margin="6,0,0,0" Click="refreshClick" Padding="10,5"
                                 ToolTip="Rescan folder">Refresh</Button>
                     </DockPanel>
@@ -127,9 +129,9 @@
                     SizeChanged="timelineSizeChanged" MouseLeftButtonDown="timelineMouseLeftButtonDown">
                 <Rectangle x:Name="TimelineTrack" Height="6" RadiusX="3" RadiusY="3" Fill="#55555F"/>
                 <Rectangle x:Name="TimelineSelection" Height="6" RadiusX="3" RadiusY="3" Fill="#4A9EFF" Opacity="0.85"/>
-                <Thumb x:Name="InThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#7CD992" ToolTip="In"
+                <Thumb x:Name="InThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#7CD992" ToolTip="In (I)"
                        DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="inThumbDragDelta"/>
-                <Thumb x:Name="OutThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#FF7C7C" ToolTip="Out"
+                <Thumb x:Name="OutThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#FF7C7C" ToolTip="Out (O)"
                        DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="outThumbDragDelta"/>
                 <Thumb x:Name="PlayheadThumb" Style="{StaticResource PlayheadThumbStyle}"
                        DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="playheadThumbDragDelta"/>
@@ -137,19 +139,19 @@
 
             <!-- play buttons + in/out -->
             <WrapPanel Grid.Row="4" Margin="0,6,0,0" VerticalAlignment="Center">
-                <Button Click="prevClick" ToolTip="Previous clip" Padding="10,5">&lt; Prev</Button>
-                <Button x:Name="PlayPauseButton" Margin="6,0,0,0" Width="80" Click="playPauseClick">Play</Button>
-                <Button Margin="6,0,0,0" Click="nextClick" ToolTip="Next clip / skip" Padding="10,5">Next &gt;</Button>
+                <Button Click="prevClick" ToolTip="Previous clip (Up / P)" Padding="10,5">&lt; Prev</Button>
+                <Button x:Name="PlayPauseButton" Margin="6,0,0,0" Width="80" Click="playPauseClick" ToolTip="Space">Play</Button>
+                <Button Margin="6,0,0,0" Click="nextClick" ToolTip="Next clip / skip (Down / N)" Padding="10,5">Next &gt;</Button>
 
                 <TextBlock x:Name="TimeText" Margin="14,0,0,0" VerticalAlignment="Center" FontFamily="Consolas" Width="200"/>
 
                 <TextBlock Text="In" Margin="8,0,6,0" VerticalAlignment="Center" Foreground="#7CD992" FontWeight="Bold"/>
                 <TextBox x:Name="InText" Width="96" VerticalContentAlignment="Center" FontFamily="Consolas" LostFocus="inOutTextLostFocus"/>
-                <Button Margin="4,0,0,0" Click="setInClick" ToolTip="Set In at playhead" Padding="8,5">Set</Button>
+                <Button Margin="4,0,0,0" Click="setInClick" ToolTip="Set In at playhead (I)" Padding="8,5">Set (I)</Button>
 
                 <TextBlock Text="Out" Margin="14,0,6,0" VerticalAlignment="Center" Foreground="#FF7C7C" FontWeight="Bold"/>
                 <TextBox x:Name="OutText" Width="96" VerticalContentAlignment="Center" FontFamily="Consolas" LostFocus="inOutTextLostFocus"/>
-                <Button Margin="4,0,0,0" Click="setOutClick" ToolTip="Set Out at playhead" Padding="8,5">Set</Button>
+                <Button Margin="4,0,0,0" Click="setOutClick" ToolTip="Set Out at playhead (O)" Padding="8,5">Set (O)</Button>
 
                 <TextBlock x:Name="KeepText" Margin="14,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
             </WrapPanel>
@@ -163,7 +165,7 @@
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
                         <Button x:Name="TrimButton" Style="{StaticResource AccentButton}" Click="trimClick"
-                                ToolTip="Save In/Out as a _trimmed copy">Trim</Button>
+                                ToolTip="Save In/Out as a _trimmed copy (Enter)">Trim  (Enter)</Button>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Margin="16,0,0,0">
                         <TextBlock x:Name="CutInfoText" TextWrapping="Wrap"/>
@@ -174,9 +176,11 @@
                 </Grid>
             </Border>
 
-            <!-- status -->
+            <!-- status + key list -->
             <StackPanel Grid.Row="7" Margin="0,8,0,0">
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap"/>
+                <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap"
+                           Text="Keys:  Space play/pause  |  I / O set In / Out  |  Left/Right seek 5s (Shift 1s)  |  Home jump to In  |  Up/Down or P/N prev/next clip  |  Enter trim  |  Ctrl+O open folder"/>
             </StackPanel>
         </Grid>
     </Grid>

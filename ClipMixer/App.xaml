@@ -23,7 +23,7 @@
             <Setter Property="Padding" Value="10"/>
         </Style>
 
-        <!-- buttons never take focus -->
+        <!-- buttons never take focus so space/enter always hit the hotkeys -->
         <Style TargetType="Button">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Foreground" Value="{StaticResource TextFg}"/>
