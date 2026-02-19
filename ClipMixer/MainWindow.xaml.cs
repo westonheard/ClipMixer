@@ -26,7 +26,13 @@ namespace ClipMixer{
         private string? folder;
         private CancellationTokenSource? scanCts;
 
-        private bool trimming;
+        //trim queue, one at a time so u can keep going thru clips
+        private readonly ObservableCollection<ClipJob> jobs = new();
+        private readonly Channel<ClipJob> jobQueue = Channel.CreateUnbounded<ClipJob>();
+        private readonly HashSet<string> activeJobPaths = new(StringComparer.OrdinalIgnoreCase);
+        private readonly CancellationTokenSource shutdownCts = new();
+        private Task? jobWorker;
+        private bool closeConfirmed;
 
         private ClipEntry? current;
         private MediaInfo? info;
@@ -46,6 +52,7 @@ namespace ClipMixer{
             InitializeComponent();
 
             ClipList.ItemsSource = clips;
+            JobList.ItemsSource = jobs;
 
             processor = new ClipProcessor(runner, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipMixer", "logs"));
 
@@ -68,6 +75,7 @@ namespace ClipMixer{
         }
 
         private void onLoaded(object sender, RoutedEventArgs e){
+            jobWorker = runJobsAsync();
             focusRoot();
 
             //give the video host a sec to make the player, then report problems / reopen last folder
@@ -123,11 +131,12 @@ namespace ClipMixer{
             await clearCurrentAsync();
             ScanText.Text = "Scanning...";
 
+            HashSet<string> active = new HashSet<string>(activeJobPaths, StringComparer.OrdinalIgnoreCase);
             bool recurse = SubfoldersCheck.IsChecked == true;
             bool autoSelected = false;
 
             try{
-                ScanSummary summary = await ClipLibrary.scanAsync(folder, recurse, runner,
+                ScanSummary summary = await ClipLibrary.scanAsync(folder, recurse, runner, active,
                     entry => Dispatcher.BeginInvoke(() => {
                         if(cts.IsCancellationRequested){return;}
                         addClip(entry);
@@ -185,9 +194,11 @@ namespace ClipMixer{
         }
 
         private void updateCounts(){
+            int pending = jobs.Count(j => !j.IsFinished);
             int toReview = allClips.Count(c => !c.IsTrimmed);
             int trimmed = allClips.Count(c => c.IsTrimmed) + oldNamedExports;
             List<string> parts = new List<string> { toReview == 1 ? "1 clip to review" : $"{toReview} clips to review" };
+            if(pending > 0){parts.Add($"{pending} processing");}
             if(trimmed > 0){parts.Add($"{trimmed} already trimmed");}
             ScanText.Text = folder == null ? "" : string.Join("  -  ", parts);
         }
@@ -279,7 +290,7 @@ namespace ClipMixer{
         private async Task goToIndexAfterRemovalAsync(int index){
             if(!clips.Any(c => !c.IsTrimmed)){
                 await clearCurrentAsync();
-                status("All clips in this folder are reviewed.");
+                status(jobs.Any(j => !j.IsFinished) ? "All clips reviewed - waiting for trims to finish." : "All clips in this folder are reviewed.");
                 return;
             }
             int start = Math.Clamp(index, 0, clips.Count - 1);
@@ -408,7 +419,6 @@ namespace ClipMixer{
         private void trimCurrent(){
             ClipEntry? entry = current;
             if(entry == null){status("No clip selected."); return;}
-            if(trimming){status("Still trimming the last one, hang on."); return;}
             if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
             if(outSec - inSec < 0.1){status("Out must be after In."); return;}
             if(inSec <= 0.05 && outSec >= durationSec - 0.05){
@@ -423,29 +433,19 @@ namespace ClipMixer{
                 OutSec = outSec,
             };
 
-            _ = runTrimAsync(entry, req);
-        }
+            entry.Note = null;
+            ClipJob job = new ClipJob(entry, req);
+            jobs.Insert(0, job);
+            activeJobPaths.Add(entry.FullPath);
 
-        private async Task runTrimAsync(ClipEntry entry, TrimRequest req){
-            trimming = true;
-            TrimButton.IsEnabled = false;
-            try{
-                TrimResult result = await Task.Run(() => processor.trimAsync(req,
-                    (stage, p) => Dispatcher.BeginInvoke(() => status(p > 0 && p < 1 ? $"{stage} {p:P0}" : $"{stage}...")),
-                    CancellationToken.None));
-                status($"Trimmed {entry.FileName} to {formatDur(result.OutputDurationSec)}, saved as a _trimmed copy next to the original.");
+            double keepLen = outSec - inSec;
+            int idx = clips.IndexOf(entry);
+            removeClip(entry.FullPath);
+            _ = goToIndexAfterRemovalAsync(idx);
 
-                int idx = clips.IndexOf(entry);
-                removeClip(entry.FullPath);
-                updateCounts();
-                await goToIndexAfterRemovalAsync(idx);
-            }catch(Exception ex){
-                string? log = (ex as ClipJobException)?.LogPath;
-                status($"Trim failed for {entry.FileName}: {ex.Message}" + (log != null ? $"  (log: {log})" : ""));
-            }finally{
-                trimming = false;
-                TrimButton.IsEnabled = true;
-            }
+            jobQueue.Writer.TryWrite(job);
+            status($"Queued: {entry.FileName}  ({formatDur(keepLen)}). Saved as a _trimmed copy next to the original.");
+            updateCounts();
         }
 
         private void selectClipForce(ClipEntry entry){
@@ -454,6 +454,63 @@ namespace ClipMixer{
             suppressSelection = false;
             ClipList.ScrollIntoView(entry);
             _ = loadClipAsync(entry);
+        }
+
+        private async Task runJobsAsync(){
+            try{
+                await foreach(ClipJob job in jobQueue.Reader.ReadAllAsync(shutdownCts.Token)){
+                    string src = job.Request.SourcePath;
+                    job.report("Starting", 0);
+                    try{
+                        TrimResult result = await Task.Run(() => processor.trimAsync(job.Request,
+                            (stage, p) => Dispatcher.BeginInvoke(() => {if(!job.IsFinished){job.report(stage, p);}}),
+                            shutdownCts.Token));
+
+                        job.succeed(result);
+                        status($"Trimmed {job.FileName} to {formatDur(result.OutputDurationSec)}." +
+                               (result.Warnings.Count > 0 ? "  Note: " + string.Join(" ", result.Warnings) : ""));
+                    }catch(Exception ex){
+                        string msg = ex.Message;
+                        string? log = (ex as ClipJobException)?.LogPath;
+                        job.fail(msg, log);
+                        status($"Trim failed for {job.FileName}: {msg}" + (log != null ? $"  (log: {log})" : ""));
+
+                        if(File.Exists(src) && !shutdownCts.IsCancellationRequested && belongsToOpenFolder(src)){
+                            FileInfo fi = new FileInfo(src);
+                            ClipEntry back = new ClipEntry
+                            {
+                                FullPath = src,
+                                RelativePath = Path.GetRelativePath(folder!, src),
+                                SizeBytes = fi.Length,
+                                DurationSeconds = job.Entry.DurationSeconds,
+                                ModifiedUtc = fi.LastWriteTimeUtc,
+                                IsTrimmed = job.Entry.IsTrimmed,
+                                Note = "Last trim failed: " + msg,
+                            };
+                            addClip(back);
+                            if(current == null){selectClipForce(back);}
+                        }
+                    }finally{
+                        activeJobPaths.Remove(src);
+                        updateCounts();
+                    }
+                }
+            }catch(OperationCanceledException){}
+        }
+
+        private bool belongsToOpenFolder(string path){
+            if(folder == null){return false;}
+            string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+            string dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? "";
+            if(SubfoldersCheck.IsChecked == true){
+                return string.Equals(dir, root, StringComparison.OrdinalIgnoreCase) ||
+                       dir.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+            }
+            return string.Equals(dir, root, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void clearFinishedClick(object sender, RoutedEventArgs e){
+            foreach(ClipJob j in jobs.Where(j => j.IsFinished).ToList()){jobs.Remove(j);}
         }
 
         //-------- keyboard / mouse --------
@@ -515,8 +572,27 @@ namespace ClipMixer{
             return null;
         }
 
-        private void onClosing(object? sender, CancelEventArgs e){
+        private async void onClosing(object? sender, CancelEventArgs e){
+            if(!closeConfirmed){
+                int busy = jobs.Count(j => !j.IsFinished);
+                if(busy > 0){
+                    e.Cancel = true;
+                    MessageBoxResult r = MessageBox.Show(this,
+                        $"{busy} clip(s) are still being trimmed.\n\nQuit anyway? Unfinished trims are cancelled and those originals are left untouched.",
+                        "ClipMixer", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                    if(r != MessageBoxResult.Yes){return;}
+
+                    shutdownCts.Cancel();
+                    status("Cancelling...");
+                    try{if(jobWorker != null){await jobWorker.WaitAsync(TimeSpan.FromSeconds(15));}}catch{}
+                    closeConfirmed = true;
+                    Close();
+                    return;
+                }
+            }
+
             scanCts?.Cancel();
+            shutdownCts.Cancel();
         }
 
         //-------- timeline --------

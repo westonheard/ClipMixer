@@ -70,14 +70,14 @@ namespace ClipMixer{
 
         //onClip fires from a worker thread per clip so the list fills in while its still scanning
         public static async Task<ScanSummary> scanAsync(
-            string folder, bool recurse, FfmpegRunner runner,
+            string folder, bool recurse, FfmpegRunner runner, ISet<string> activePaths,
             Action<ClipEntry> onClip, Action<int, int>? onProgress, CancellationToken ct){
             ScanSummary summary = new ScanSummary();
 
             List<string> all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
 
             List<string> candidates = all
-                .Where(p => !looksTrimmedByName(p))
+                .Where(p => !looksTrimmedByName(p) && !activePaths.Contains(p))
                 .OrderBy(p => Path.GetRelativePath(folder, p), StringComparer.OrdinalIgnoreCase)
                 .ToList();
             summary.Candidates = candidates.Count;
