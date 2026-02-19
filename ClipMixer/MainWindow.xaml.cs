@@ -539,7 +539,9 @@ namespace ClipMixer{
                 case Key.Home: seekTo(inSec); break;
                 case Key.Up: case Key.P: case Key.PageUp: navigate(-1); break;
                 case Key.Down: case Key.N: case Key.PageDown: navigate(+1); break;
-                case Key.Enter: trimCurrent(); break;
+                case Key.Enter:
+                    if(!e.IsRepeat){trimCurrent();}
+                    break;
                 default:
                     return;
             }
