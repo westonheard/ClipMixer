@@ -59,6 +59,12 @@
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Padding" Value="16,9"/>
         </Style>
+        <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#8E3434"/>
+            <Setter Property="BorderBrush" Value="#A84646"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="16,9"/>
+        </Style>
 
         <Style TargetType="CheckBox">
             <Setter Property="Focusable" Value="False"/>

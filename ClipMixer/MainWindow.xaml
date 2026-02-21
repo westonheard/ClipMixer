@@ -191,7 +191,7 @@
                 <TextBlock x:Name="KeepText" Margin="14,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"/>
             </WrapPanel>
 
-            <!-- trim + options -->
+            <!-- trim/delete + options -->
             <Border Grid.Row="5" Margin="0,10,0,0" Style="{StaticResource Panel}">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -201,10 +201,15 @@
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Top">
                         <Button x:Name="TrimButton" Style="{StaticResource AccentButton}" Click="trimClick"
                                 ToolTip="Save In/Out as a _trimmed copy (Enter)">Trim  (Enter)</Button>
+                        <Button x:Name="DeleteButton" Style="{StaticResource DangerButton}" Margin="8,0,0,0" Click="deleteClick"
+                                ToolTip="Delete this clip (Del)">Delete clip  (Del)</Button>
                     </StackPanel>
                     <StackPanel Grid.Column="1" Margin="16,0,0,0">
                         <TextBlock x:Name="CutInfoText" TextWrapping="Wrap"/>
                         <WrapPanel Margin="0,6,0,0">
+                            <CheckBox x:Name="RecycleCheck" Margin="0,0,16,4" Content="Use Recycle Bin" IsChecked="True"
+                                      ToolTip="Send deleted clips to the Recycle Bin"/>
+                            <CheckBox x:Name="ConfirmDeleteCheck" Margin="0,0,16,4" Content="Confirm deletes" IsChecked="True"/>
                             <CheckBox x:Name="AutoPlayCheck" Margin="0,0,16,4" Content="Auto-play clips" IsChecked="True"/>
                         </WrapPanel>
                     </StackPanel>
@@ -215,7 +220,7 @@
             <StackPanel Grid.Row="7" Margin="0,8,0,0">
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap"/>
                 <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap"
-                           Text="Keys:  Space play/pause  |  I / O set In / Out  |  Left/Right seek 5s (Shift 1s)  |  Home jump to In  |  Up/Down or P/N prev/next clip  |  Enter trim  |  Ctrl+O open folder"/>
+                           Text="Keys:  Space play/pause  |  I / O set In / Out  |  Left/Right seek 5s (Shift 1s)  |  Home jump to In  |  Up/Down or P/N prev/next clip  |  Enter trim  |  Del delete  |  Ctrl+O open folder"/>
             </StackPanel>
         </Grid>
     </Grid>

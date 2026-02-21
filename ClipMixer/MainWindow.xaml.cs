@@ -41,6 +41,7 @@ namespace ClipMixer{
         private double inSec, outSec, playSec;
         private bool outUserSet;
         private bool draggingPlayhead;
+        private bool deleting;
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
 
@@ -206,7 +207,7 @@ namespace ClipMixer{
         //-------- clip selection / loading --------
 
         private void clipListSelectionChanged(object sender, SelectionChangedEventArgs e){
-            if(suppressSelection){return;}
+            if(suppressSelection || deleting){return;}
             if(ClipList.SelectedItem is ClipEntry entry && !ReferenceEquals(entry, current)){
                 _ = loadClipAsync(entry);
             }
@@ -243,7 +244,7 @@ namespace ClipMixer{
             try{
                 info = await runner.probeAsync(entry.FullPath);
             }catch(Exception ex){
-                if(token == loadToken){status($"Couldn't read clip details ({ex.Message}). It may be damaged.");}
+                if(token == loadToken){status($"Couldn't read clip details ({ex.Message}). It may be damaged - you can still delete it.");}
             }
             if(token != loadToken){return;}
 
@@ -261,7 +262,7 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
-                    : "Set In (I) and Out (O), then Enter to trim - or N to skip.");
+                    : "Set In (I) and Out (O), then Enter to trim - or Del to delete, N to skip.");
             }
 
             Mpv.load(entry.FullPath, null, AutoPlayCheck.IsChecked != true);
@@ -304,7 +305,7 @@ namespace ClipMixer{
         private void prevClick(object sender, RoutedEventArgs e) => navigate(-1);
 
         private void navigate(int delta){
-            if(clips.Count == 0){return;}
+            if(clips.Count == 0 || deleting){return;}
             int idx = current != null ? clips.IndexOf(current) : -1;
             int target = idx < 0 ? 0 : idx + delta;
             if(target < 0 || target >= clips.Count){
@@ -360,14 +361,14 @@ namespace ClipMixer{
         private void setOutClick(object sender, RoutedEventArgs e) => setOut(Mpv.getTimePosSeconds());
 
         private void setIn(double t){
-            if(current == null || durationSec <= 0){return;}
+            if(current == null || durationSec <= 0 || deleting){return;}
             inSec = Math.Clamp(t, 0, Math.Max(0, durationSec - 0.1));
             if(inSec >= outSec - 0.05){outSec = durationSec; outUserSet = false;}//in past out, so out goes back to the end
             markersChanged();
         }
 
         private void setOut(double t){
-            if(current == null || durationSec <= 0){return;}
+            if(current == null || durationSec <= 0 || deleting){return;}
             outSec = Math.Clamp(t, 0, durationSec);
             outUserSet = true;
             if(outSec <= inSec + 0.05){inSec = 0;}//out before in, in goes back to start
@@ -412,12 +413,14 @@ namespace ClipMixer{
             CutInfoText.Text = "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
         }
 
-        //-------- trim --------
+        //-------- trim / delete --------
 
         private void trimClick(object sender, RoutedEventArgs e) => trimCurrent();
+        private void deleteClick(object sender, RoutedEventArgs e) => _ = deleteCurrentAsync();
 
         private void trimCurrent(){
             ClipEntry? entry = current;
+            if(deleting){return;}
             if(entry == null){status("No clip selected."); return;}
             if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
             if(outSec - inSec < 0.1){status("Out must be after In."); return;}
@@ -446,6 +449,50 @@ namespace ClipMixer{
             jobQueue.Writer.TryWrite(job);
             status($"Queued: {entry.FileName}  ({formatDur(keepLen)}). Saved as a _trimmed copy next to the original.");
             updateCounts();
+        }
+
+        private async Task deleteCurrentAsync(){
+            ClipEntry? entry = current;
+            if(entry == null || deleting){return;}
+            if(!probeDone){status("Still loading this clip - try again in a moment."); return;}
+
+            bool recycle = RecycleCheck.IsChecked == true;
+            if(ConfirmDeleteCheck.IsChecked == true){
+                string how = recycle ? "It will be moved to the Recycle Bin." : "It will be PERMANENTLY deleted.";
+                MessageBoxResult r = MessageBox.Show(this, $"Delete this clip?\n\n{entry.FileName}\n\n{how}",
+                    "Delete clip", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if(r != MessageBoxResult.Yes){return;}
+            }
+            if(!ReferenceEquals(entry, current) || deleting){return;}
+
+            //detach the clip before awaiting anything so nothing else can grab it meanwhile
+            deleting = true;
+            int idx = clips.IndexOf(entry);
+            loadToken++;
+            current = null;
+            probeDone = false;
+            durationSec = 0;
+            inSec = outSec = playSec = 0;
+            updateMarkerTexts();
+            updateTimelineVisuals();
+            status($"Deleting {entry.FileName}...");
+
+            bool deleted = false;
+            try{
+                await Mpv.stopAsync();//player has to let go of the file first
+                await FileOps.deleteAsync(entry.FullPath, recycle);
+                deleted = true;
+
+                removeClip(entry.FullPath);
+                status($"Deleted {entry.FileName}{(recycle ? " (in the Recycle Bin)" : " permanently")}.");
+            }catch(Exception ex){
+                status($"Couldn't delete {entry.FileName}: {ex.Message}");
+            }finally{
+                deleting = false;
+                updateCounts();
+            }
+
+            if(deleted){await goToIndexAfterRemovalAsync(idx);}else if(File.Exists(entry.FullPath) && clips.Contains(entry)){selectClipForce(entry);}
         }
 
         private void selectClipForce(ClipEntry entry){
@@ -488,7 +535,7 @@ namespace ClipMixer{
                                 Note = "Last trim failed: " + msg,
                             };
                             addClip(back);
-                            if(current == null){selectClipForce(back);}
+                            if(current == null && !deleting){selectClipForce(back);}
                         }
                     }finally{
                         activeJobPaths.Remove(src);
@@ -541,6 +588,9 @@ namespace ClipMixer{
                 case Key.Down: case Key.N: case Key.PageDown: navigate(+1); break;
                 case Key.Enter:
                     if(!e.IsRepeat){trimCurrent();}
+                    break;
+                case Key.Delete:
+                    if(!e.IsRepeat){_ = deleteCurrentAsync();}
                     break;
                 default:
                     return;

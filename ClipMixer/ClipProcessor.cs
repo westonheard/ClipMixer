@@ -116,7 +116,7 @@ namespace ClipMixer{
                 throw new ClipJobException(ex is OperationCanceledException ? "Cancelled." : ex.Message, logPath, ex);
             }finally{
                 if(dstIsOurs){
-                    try{await FileOps.deleteAsync(dst, CancellationToken.None).ConfigureAwait(false);}catch(Exception ex){Log("Cleanup failed: " + ex.Message);}
+                    try{await FileOps.deleteAsync(dst, false, CancellationToken.None).ConfigureAwait(false);}catch(Exception ex){Log("Cleanup failed: " + ex.Message);}
                 }
             }
         }
