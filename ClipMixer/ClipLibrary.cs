@@ -52,7 +52,13 @@ namespace ClipMixer{
         public static readonly HashSet<string> VideoExtensions =
             new(StringComparer.OrdinalIgnoreCase) { ".mp4", ".mov", ".m4v", ".mkv" };
 
-        //trimmed copies get saved as ..._trimmed.mp4, skip those
+        public static bool isWorkFile(string path){
+            string n = Path.GetFileName(path);
+            return n.Contains(ClipProcessor.TempMarker, StringComparison.OrdinalIgnoreCase) ||
+                   n.Contains(ClipProcessor.BackupMarker, StringComparison.OrdinalIgnoreCase);
+        }
+
+        //the old version saved as ..._trimmed.mp4 w/ no tag, so go by name for those
         public static bool looksTrimmedByName(string path) =>
             Path.GetFileNameWithoutExtension(path).EndsWith("_trimmed", StringComparison.OrdinalIgnoreCase);
 
@@ -77,11 +83,11 @@ namespace ClipMixer{
             List<string> all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
 
             List<string> candidates = all
-                .Where(p => !looksTrimmedByName(p) && !activePaths.Contains(p))
+                .Where(p => !isWorkFile(p) && !looksTrimmedByName(p) && !activePaths.Contains(p))
                 .OrderBy(p => Path.GetRelativePath(folder, p), StringComparer.OrdinalIgnoreCase)
                 .ToList();
             summary.Candidates = candidates.Count;
-            summary.AlreadyTrimmed = all.Count(looksTrimmedByName);
+            summary.AlreadyTrimmed = all.Count(p => !isWorkFile(p) && looksTrimmedByName(p));
 
             int done = 0;
             onProgress?.Invoke(0, candidates.Count);
@@ -91,22 +97,26 @@ namespace ClipMixer{
                 FileInfo fi = new FileInfo(path);
                 if(!fi.Exists){continue;}
 
+                bool trimmed;
                 double duration;
                 try{
                     MediaInfo info = await runner.probeAsync(path, ct).ConfigureAwait(false);
+                    trimmed = ClipProcessor.isTrimTag(info.getTag("comment"));
                     duration = info.DurationSeconds;
                 }catch(OperationCanceledException){throw;}catch{
                     //broken file, still list it so it can be deleted
+                    trimmed = false;
                     duration = 0;
                 }
 
-                summary.Untrimmed++;
+                if(trimmed){summary.AlreadyTrimmed++;}else{summary.Untrimmed++;}
                 onClip(new ClipEntry{
                     FullPath = path,
                     RelativePath = Path.GetRelativePath(folder, path),
                     SizeBytes = fi.Length,
                     DurationSeconds = duration,
                     ModifiedUtc = fi.LastWriteTimeUtc,
+                    IsTrimmed = trimmed,
                 });
                 onProgress?.Invoke(++done, candidates.Count);
             }

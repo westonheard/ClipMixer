@@ -21,8 +21,8 @@ namespace ClipMixer{
         private readonly ClipProcessor processor;
 
         private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows
-        private readonly List<ClipEntry> allClips = new();//every clip found
-        private int oldNamedExports;//"_trimmed" copies, never listed
+        private readonly List<ClipEntry> allClips = new();//every clip found, trimmed ones too
+        private int oldNamedExports;//"_trimmed" files from the old app, never listed
         private string? folder;
         private CancellationTokenSource? scanCts;
 
@@ -262,6 +262,7 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
+                    : entry.IsTrimmed ? "This clip was already trimmed by ClipMixer. You can trim it again or delete it."
                     : "Set In (I) and Out (O), then Enter to trim - or Del to delete, N to skip.");
             }
 
@@ -413,7 +414,7 @@ namespace ClipMixer{
             CutInfoText.Text = "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
         }
 
-        //-------- trim / delete --------
+        //-------- trim & replace / delete --------
 
         private void trimClick(object sender, RoutedEventArgs e) => trimCurrent();
         private void deleteClick(object sender, RoutedEventArgs e) => _ = deleteCurrentAsync();
@@ -434,6 +435,7 @@ namespace ClipMixer{
                 SourcePath = entry.FullPath,
                 InSec = inSec,
                 OutSec = outSec,
+                UseRecycleBin = RecycleCheck.IsChecked == true,
             };
 
             entry.Note = null;
@@ -447,7 +449,7 @@ namespace ClipMixer{
             _ = goToIndexAfterRemovalAsync(idx);
 
             jobQueue.Writer.TryWrite(job);
-            status($"Queued: {entry.FileName}  ({formatDur(keepLen)}). Saved as a _trimmed copy next to the original.");
+            status($"Queued: {entry.FileName}  ({formatDur(keepLen)}). It's replaced only after the new file is verified.");
             updateCounts();
         }
 
@@ -509,10 +511,22 @@ namespace ClipMixer{
                     string src = job.Request.SourcePath;
                     job.report("Starting", 0);
                     try{
-                        TrimResult result = await Task.Run(() => processor.trimAsync(job.Request,
+                        TrimResult result = await Task.Run(() => processor.trimAndReplaceAsync(job.Request,
                             (stage, p) => Dispatcher.BeginInvoke(() => {if(!job.IsFinished){job.report(stage, p);}}),
                             shutdownCts.Token));
 
+                        if(File.Exists(src) && !shutdownCts.IsCancellationRequested && belongsToOpenFolder(src)){
+                            FileInfo fi = new FileInfo(src);
+                            addClip(new ClipEntry
+                            {
+                                FullPath = src,
+                                RelativePath = Path.GetRelativePath(folder!, src),
+                                SizeBytes = fi.Length,
+                                DurationSeconds = result.OutputDurationSec,
+                                ModifiedUtc = fi.LastWriteTimeUtc,
+                                IsTrimmed = true,
+                            });
+                        }
                         job.succeed(result);
                         status($"Trimmed {job.FileName} to {formatDur(result.OutputDurationSec)}." +
                                (result.Warnings.Count > 0 ? "  Note: " + string.Join(" ", result.Warnings) : ""));
