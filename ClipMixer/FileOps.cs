@@ -44,6 +44,12 @@ namespace ClipMixer{
             throw new IOException($"Could not move to Recycle Bin: {Path.GetFileName(path)} ({last?.Message})", last);
         }
 
+        //force the export onto disk before the original gets removed, so a power cut cant lose both
+        public static void flushToDisk(string path){
+            using FileStream fs = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.Read);
+            fs.Flush(flushToDisk: true);
+        }
+
         public static string uniquePath(string dir, string baseName, string ext){
             string p = Path.Combine(dir, baseName + ext);
             for(int n = 2; File.Exists(p); n++){

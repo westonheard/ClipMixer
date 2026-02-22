@@ -24,7 +24,11 @@ namespace ClipMixer{
         public string LogPath { get; init; } = "";
     }
 
-    //export to temp -> swap w/ original -> recycle the original
+    public sealed class VerificationException : Exception{
+        public VerificationException(string message) : base(message){}
+    }
+
+    //export to temp -> verify it fully decodes -> swap w/ original -> verify again -> only then recycle the original
     //anything failing before the swap leaves the original alone, failing during the swap puts it back
     public sealed class ClipProcessor{
         public const string TrimTagValue = "ClipMixer trimmed";//goes in the comment tag, used to skip clips already trimmed
@@ -109,8 +113,12 @@ namespace ClipMixer{
 
                 AfterExportHook?.Invoke(tmp);
 
-                MediaInfo outInfo = await runner.probeAsync(tmp, ct).ConfigureAwait(false);
+                //make sure the temp actually plays all the way
+                progress?.Invoke("Verifying", 0);
+                MediaInfo outInfo = await verifyAsync(tmp, src, srcInfo, seekRef, cutEnd, expVideo,
+                    warnings, Log, p => progress?.Invoke("Verifying", p), ct).ConfigureAwait(false);
                 long tmpSize = new FileInfo(tmp).Length;
+                FileOps.flushToDisk(tmp);//verified bytes have to be on disk before the original goes anywhere
 
                 //swap, original -> backup then temp -> original name
                 ct.ThrowIfCancellationRequested();
@@ -142,6 +150,29 @@ namespace ClipMixer{
                     File.SetCreationTimeUtc(src, created);
                     File.SetLastWriteTimeUtc(src, modified);
                 }catch(Exception ex){warnings.Add($"Couldn't preserve file dates: {ex.Message}");}
+
+                //check the file thats now at the original path
+                try{
+                    FileInfo finalFi = new FileInfo(src);
+                    if(!finalFi.Exists || finalFi.Length != tmpSize){
+                        throw new VerificationException("Replaced file size doesn't match the verified export.");
+                    }
+                    MediaInfo finalInfo = await runner.probeAsync(src, CancellationToken.None).ConfigureAwait(false);
+                    if(!isTrimTag(finalInfo.getTag("comment")) || Math.Abs(finalInfo.DurationSeconds - outInfo.DurationSeconds) > 0.05){
+                        throw new VerificationException("Replaced file doesn't match the verified export.");
+                    }
+                }catch(Exception ex){
+                    Log($"Post-replace check failed: {ex.Message}. Rolling back.");
+                    string failed = FileOps.uniquePath(dir, name + TempMarker, ext);
+                    try{
+                        File.Move(src, failed);
+                        restoreBackup(backup, src, Log);
+                        try{await FileOps.deleteAsync(failed, false).ConfigureAwait(false);}catch{}
+                    }catch(Exception rex){
+                        throw new Exception($"Post-replace check failed and rollback failed. Your original is safe at: {backup} ({rex.Message})");
+                    }
+                    throw new Exception($"Post-replace check failed; the original was restored. ({ex.Message})");
+                }
 
                 progress?.Invoke("Removing original", 0);
                 try{
@@ -221,6 +252,144 @@ namespace ClipMixer{
             a.Add(dst);
             return a;
         }
+
+        //checks tracks, length, every stream covers the cut, then a full decode of all video + audio
+        public async Task<MediaInfo> verifyAsync(string file, string src, MediaInfo srcInfo, double cutStart, double cutEnd,
+            int expVideo, List<string> warnings, Action<string> log,
+            Action<double>? progress, CancellationToken ct){
+            double sourceStartSpread = startSpread(srcInfo);
+            int expAudio = srcInfo.AudioTrackCount;
+            double expected = cutEnd - cutStart;
+
+            MediaInfo info;
+            try{info = await runner.probeAsync(file, ct).ConfigureAwait(false);}catch(Exception ex){throw new VerificationException($"Exported file can't be read: {ex.Message}");}
+
+            log($"Verify: duration={info.DurationSeconds:0.###} (expected {expected:0.###}) video={info.VideoTrackCount} audio={info.AudioTrackCount}");
+
+            if(info.VideoTrackCount != expVideo){
+                throw new VerificationException($"Export has {info.VideoTrackCount} video track(s), expected {expVideo}.");
+            }
+            if(info.AudioTrackCount != expAudio){
+                throw new VerificationException($"Export has {info.AudioTrackCount} audio track(s), expected {expAudio}.");
+            }
+            if(!isTrimTag(info.getTag("comment"))){
+                throw new VerificationException("Export is missing the trimmed marker tag.");
+            }
+
+            double frame = info.Fps > 1 ? 1.0 / info.Fps : 1.0 / 30;
+            //double tol = 0.5;
+            double tol = Math.Max(0.5, 3 * frame);
+            if(Math.Abs(info.DurationSeconds - expected) > tol){
+                throw new VerificationException($"Export is {info.DurationSeconds:0.00}s long, expected {expected:0.00}s.");
+            }
+
+            //each track only has to cover as much of the cut as its source track did (mic that starts late etc)
+            List<StreamInfo> srcV = srcInfo.Streams.Where(s => s.CodecType == "video" && !s.IsAttachedPicture).ToList();
+            List<StreamInfo> srcA = srcInfo.Streams.Where(s => s.CodecType == "audio").ToList();
+            List<StreamInfo> outV = info.Streams.Where(s => s.CodecType == "video" && !s.IsAttachedPicture).ToList();
+            List<StreamInfo> outA = info.Streams.Where(s => s.CodecType == "audio").ToList();
+
+            double Coverage(StreamInfo? s){
+                if(s?.Duration == null){return expected;}
+                double st = (s.StartTime ?? srcInfo.StartTime) - srcInfo.StartTime;
+                return Math.Clamp(Math.Min(cutEnd, st + s.Duration.Value) - Math.Max(cutStart, st), 0, expected);
+            }
+            void CheckStream(StreamInfo o, double need, string what){
+                if(o.Duration.HasValue && o.Duration.Value < need - tol){
+                    throw new VerificationException($"{what} is only {o.Duration.Value:0.00}s long; the original has {need:0.00}s in this section.");
+                }
+            }
+
+            //one decode pass per track type, each w/ the length it has to reach
+            List<(string Map, double Need, string What)> passes = new List<(string Map, double Need, string What)>();
+            double videoNeed = 0;
+            for(int k = 0; k < outV.Count; k++){
+                double need = k < srcV.Count ? Coverage(srcV[k]) : expected;
+                CheckStream(outV[k], need, $"Video track {k + 1}");
+                videoNeed = Math.Max(videoNeed, need);
+            }
+            if(outV.Count > 0){passes.Add(("0:V", videoNeed, "video"));}
+            for(int k = 0; k < outA.Count; k++){
+                double need = Coverage(srcA.ElementAtOrDefault(k));
+                CheckStream(outA[k], need, $"Audio track {k + 1}");
+                passes.Add(($"0:a:{k}", need, $"audio track {k + 1}"));
+            }
+
+            //video + audio have to start together unless the original was already offset like that
+            double spread = startSpread(info);
+            double allowed = Math.Max(0.35, sourceStartSpread + 0.1);
+            log($"Verify: stream start spread={spread:0.###}s (allowed {allowed:0.###}s)");
+            if(spread > allowed){
+                throw new VerificationException($"Video and audio start {spread:0.00}s apart in the export.");
+            }
+
+            //seperate passes because ffmpegs progress follows the shortest stream, a mic that ends early would hide a short video
+            List<string> allErrors = new List<string>();
+            for(int i = 0; i < passes.Count; i++){
+                (string map, double need, string what) = passes[i];
+                int idx = i;
+                DecodeResult d = await decodeCheckAsync(file, null, null, new[] { map }, Math.Max(need, 0.001),
+                    p => progress?.Invoke((idx + p) / passes.Count), log, ct).ConfigureAwait(false);
+                if(d.ExitCode != 0){
+                    throw new VerificationException($"Export's {what} doesn't decode cleanly (exit {d.ExitCode}): {firstErrors(d.Errors)}");
+                }
+                if(d.DecodedSeconds < need - tol){
+                    throw new VerificationException($"Decoding the {what} stopped at {d.DecodedSeconds:0.00}s of {need:0.00}s.");
+                }
+                allErrors.AddRange(d.Errors);
+            }
+
+            if(allErrors.Count > 0){
+                //some recordings are glitchy already, only ok if the original has at least as many errors there
+                log("Export had decode errors; checking the same section of the original for comparison.");
+                DecodeResult srcDecode = await decodeCheckAsync(src, cutStart, cutEnd, new[] { "0:V?", "0:a?" }, expected, null, log, ct).ConfigureAwait(false);
+                if(srcDecode.Errors.Count < allErrors.Count){
+                    throw new VerificationException($"Export has decode errors not present in the original: {firstErrors(allErrors)}");
+                }
+                warnings.Add($"The original clip has {srcDecode.Errors.Count} decode warning(s) in this section; the export matches it.");
+            }
+
+            return info;
+        }
+
+        private sealed class DecodeResult{
+            public int ExitCode;
+            public double DecodedSeconds;
+            public List<string> Errors = new();
+        }
+
+        private async Task<DecodeResult> decodeCheckAsync(string file, double? start, double? end, string[] maps, double expected,
+            Action<double>? progress, Action<string> log, CancellationToken ct){
+            List<string> args = new List<string> { "-hide_banner", "-nostdin", "-loglevel", "error", "-progress", "pipe:1", "-nostats" };
+            if(start.HasValue && start.Value > 0){args.AddRange(new[] { "-ss", FfmpegRunner.sec(start.Value + 0.0005) });}
+            if(end.HasValue){args.AddRange(new[] { "-to", FfmpegRunner.sec(end.Value) });}
+            args.AddRange(new[] { "-i", file });
+            foreach(string m in maps){args.AddRange(new[] { "-map", m });}
+            args.AddRange(new[] { "-f", "null", "-" });
+
+            DecodeResult result = new DecodeResult();
+            List<string> errors = new List<string>();
+            double maxT = 0;
+            ProcessResult res = await runner.runFfmpegAsync(args, expected, progress, t => {if(t > maxT){maxT = t;}},
+                line => {lock(errors){errors.Add(line);}}, ct).ConfigureAwait(false);
+
+            result.ExitCode = res.ExitCode;
+            result.DecodedSeconds = maxT;
+            result.Errors = errors.Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+            log($"Decode check {Path.GetFileName(file)} [{string.Join(" ", maps)}]: exit={res.ExitCode} decoded={maxT:0.###}s errors={result.Errors.Count}");
+            foreach(string e in result.Errors.Take(20)){log("  " + e);}
+            return result;
+        }
+
+        public static double startSpread(MediaInfo info){
+            List<double> starts = info.Streams
+                .Where(s => s.CodecType is "video" or "audio" && !s.IsAttachedPicture && s.StartTime.HasValue)
+                .Select(s => s.StartTime!.Value).ToList();
+            return starts.Count < 2 ? 0 : starts.Max() - starts.Min();
+        }
+
+        private static string firstErrors(List<string> errors) =>
+            errors.Count == 0 ? "(no details)" : string.Join(" | ", errors.Take(3));
 
         private static string lastLines(string text, int n){
             List<string> lines = text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
