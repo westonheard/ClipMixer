@@ -73,7 +73,7 @@
                     </DockPanel>
                     <TextBlock x:Name="FolderText" Margin="0,8,0,0" Foreground="{StaticResource DimFg}" TextTrimming="CharacterEllipsis"
                                Text="No folder open"/>
-                    <CheckBox x:Name="SubfoldersCheck" Margin="0,6,0,0" Content="Include subfolders" IsChecked="True"
+                    <CheckBox x:Name="SubfoldersCheck" Margin="0,6,0,0" Content="Include subfolders"
                               Checked="subfoldersChanged" Unchecked="subfoldersChanged"/>
                     <TextBlock x:Name="ScanText" Margin="0,6,0,6" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 </StackPanel>
@@ -207,10 +207,10 @@
                     <StackPanel Grid.Column="1" Margin="16,0,0,0">
                         <TextBlock x:Name="CutInfoText" TextWrapping="Wrap"/>
                         <WrapPanel Margin="0,6,0,0">
-                            <CheckBox x:Name="RecycleCheck" Margin="0,0,16,4" Content="Use Recycle Bin" IsChecked="True"
+                            <CheckBox x:Name="RecycleCheck" Margin="0,0,16,4" Content="Use Recycle Bin" Checked="optionChanged" Unchecked="optionChanged"
                                       ToolTip="Send deleted clips and replaced originals to the Recycle Bin"/>
-                            <CheckBox x:Name="ConfirmDeleteCheck" Margin="0,0,16,4" Content="Confirm deletes" IsChecked="True"/>
-                            <CheckBox x:Name="AutoPlayCheck" Margin="0,0,16,4" Content="Auto-play clips" IsChecked="True"/>
+                            <CheckBox x:Name="ConfirmDeleteCheck" Margin="0,0,16,4" Content="Confirm deletes" Checked="optionChanged" Unchecked="optionChanged"/>
+                            <CheckBox x:Name="AutoPlayCheck" Margin="0,0,16,4" Content="Auto-play clips" Checked="optionChanged" Unchecked="optionChanged"/>
                         </WrapPanel>
                     </StackPanel>
                 </Grid>

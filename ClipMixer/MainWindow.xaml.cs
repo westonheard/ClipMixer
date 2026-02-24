@@ -19,6 +19,7 @@ namespace ClipMixer{
     public partial class MainWindow : Window{
         private readonly FfmpegRunner runner = FfmpegRunner.createDefault();
         private readonly ClipProcessor processor;
+        private readonly AppSettings settings = AppSettings.load();
 
         private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows
         private readonly List<ClipEntry> allClips = new();//every clip found, trimmed ones too
@@ -55,7 +56,12 @@ namespace ClipMixer{
             ClipList.ItemsSource = clips;
             JobList.ItemsSource = jobs;
 
-            processor = new ClipProcessor(runner, Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ClipMixer", "logs"));
+            SubfoldersCheck.IsChecked = settings.IncludeSubfolders;
+            RecycleCheck.IsChecked = settings.UseRecycleBin;
+            ConfirmDeleteCheck.IsChecked = settings.ConfirmDelete;
+            AutoPlayCheck.IsChecked = settings.AutoPlay;
+
+            processor = new ClipProcessor(runner, AppSettings.LogDir);
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
             Mpv.TimePosChanged += t => {
@@ -91,6 +97,8 @@ namespace ClipMixer{
                     _ = openFolderAsync(Path.GetFullPath(arg), null);
                 }else if(arg != null && File.Exists(arg)){
                     _ = openFolderAsync(Path.GetDirectoryName(Path.GetFullPath(arg))!, Path.GetFullPath(arg));
+                }else if(!string.IsNullOrEmpty(settings.LastFolder) && Directory.Exists(settings.LastFolder)){
+                    _ = openFolderAsync(settings.LastFolder, null);
                 }
             }));
         }
@@ -113,6 +121,7 @@ namespace ClipMixer{
 
         private void subfoldersChanged(object sender, RoutedEventArgs e){
             if(!IsLoaded){return;}
+            settings.IncludeSubfolders = SubfoldersCheck.IsChecked == true;
             if(folder != null){_ = openFolderAsync(folder, current?.FullPath);}
         }
 
@@ -123,6 +132,7 @@ namespace ClipMixer{
             CancellationTokenSource cts = scanCts = new CancellationTokenSource();
 
             this.folder = folder;
+            settings.LastFolder = folder;
             FolderText.Text = folder;
             FolderText.ToolTip = folder;
 
@@ -574,6 +584,19 @@ namespace ClipMixer{
             foreach(ClipJob j in jobs.Where(j => j.IsFinished).ToList()){jobs.Remove(j);}
         }
 
+        private void optionChanged(object sender, RoutedEventArgs e){
+            if(!IsLoaded){return;}
+            saveSettings();
+        }
+
+        private void saveSettings(){
+            settings.IncludeSubfolders = SubfoldersCheck.IsChecked == true;
+            settings.UseRecycleBin = RecycleCheck.IsChecked == true;
+            settings.ConfirmDelete = ConfirmDeleteCheck.IsChecked == true;
+            settings.AutoPlay = AutoPlayCheck.IsChecked == true;
+            settings.save();
+        }
+
         //-------- keyboard / mouse --------
 
         private void windowPreviewKeyDown(object sender, KeyEventArgs e){
@@ -659,6 +682,7 @@ namespace ClipMixer{
 
             scanCts?.Cancel();
             shutdownCts.Cancel();
+            saveSettings();
         }
 
         //-------- timeline --------
