@@ -20,6 +20,9 @@ namespace ClipMixer{
         private volatile bool running;
         private int disposed;
 
+        private readonly object waitLock = new();
+        private readonly List<TaskCompletionSource<bool>> endFileWaiters = new();
+
         public string? LoadedPath { get; private set; }
 
         public MpvPlayer(IntPtr? wid, IDictionary<string, string>? options = null){
@@ -99,11 +102,22 @@ namespace ClipMixer{
             if(options.Length == 0){command("loadfile", path, "replace");}else{command("loadfile", path, "replace", "-1", options);}
         }
 
-        public Task stopAsync(){
-            if(mpv == IntPtr.Zero){return Task.CompletedTask;}
+        //unload + wait for END_FILE so the file can actually be renamed/deleted after
+        public async Task stopAsync(TimeSpan? timeout = null){
+            if(mpv == IntPtr.Zero){return;}
+
             LoadedPath = null;
+            if(tryGetFlag("idle-active", out int idle) && idle != 0){
+                return;
+            }
+
+            TaskCompletionSource<bool> tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock(waitLock){endFileWaiters.Add(tcs);}
+
             command("stop");
-            return Task.CompletedTask;
+
+            await Task.WhenAny(tcs.Task, Task.Delay(timeout ?? TimeSpan.FromSeconds(3))).ConfigureAwait(false);
+            lock(waitLock){endFileWaiters.Remove(tcs);}
         }
 
         public void play() => setFlag("pause", false);
@@ -218,6 +232,11 @@ namespace ClipMixer{
 
                         case mpv_event_id.MPV_EVENT_END_FILE:
                             FileEnded?.Invoke();
+                            completeEndFileWaiters();
+                            break;
+
+                        case mpv_event_id.MPV_EVENT_IDLE:
+                            completeEndFileWaiters();
                             break;
 
                         case mpv_event_id.MPV_EVENT_LOG_MESSAGE:
@@ -232,6 +251,7 @@ namespace ClipMixer{
 
                         case mpv_event_id.MPV_EVENT_SHUTDOWN:
                             running = false;
+                            completeEndFileWaiters();
                             break;
                     }
                 }catch{
@@ -254,6 +274,15 @@ namespace ClipMixer{
             }
         }
 
+        private void completeEndFileWaiters(){
+            TaskCompletionSource<bool>[] waiters;
+            lock(waitLock){
+                waiters = endFileWaiters.ToArray();
+                endFileWaiters.Clear();
+            }
+            foreach(TaskCompletionSource<bool> w in waiters){w.TrySetResult(true);}
+        }
+
         public void Dispose(){
             if(Interlocked.Exchange(ref disposed, 1) != 0){return;}
 
@@ -270,6 +299,7 @@ namespace ClipMixer{
                 mpv = IntPtr.Zero;
                 try{mpv_terminate_destroy(ctx);}catch{}
             }
+            completeEndFileWaiters();
         }
 
         private void setFlag(string name, bool value){

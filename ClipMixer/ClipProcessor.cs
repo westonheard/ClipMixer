@@ -38,6 +38,8 @@ namespace ClipMixer{
         private readonly FfmpegRunner runner;
         private readonly string logDir;
 
+        public Func<string, Task>? ReleaseFileAsync { get; set; }//so the player lets go of the file before rename
+
         public Action<string>? AfterExportHook { get; set; }
         public Action<string>? BeforeReplaceHook { get; set; }
 
@@ -127,10 +129,11 @@ namespace ClipMixer{
                 FileInfo srcFi = new FileInfo(src);
                 DateTime created = srcFi.CreationTimeUtc, modified = srcFi.LastWriteTimeUtc;
 
+                if(ReleaseFileAsync != null){await ReleaseFileAsync(src).ConfigureAwait(false);}
                 BeforeReplaceHook?.Invoke(src);
 
                 try{
-                    File.Move(src, backup);
+                    await FileOps.retryAsync(() => File.Move(src, backup), ct).ConfigureAwait(false);
                 }catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException){
                     throw new Exception($"The original is in use by another program and couldn't be replaced (it was not changed): {ex.Message}");
                 }
@@ -138,11 +141,11 @@ namespace ClipMixer{
 
                 //original is at backup now, dont let cancel happen mid swap
                 try{
-                    File.Move(tmp, src);
+                    await FileOps.retryAsync(() => File.Move(tmp, src), CancellationToken.None).ConfigureAwait(false);
                     tempIsOurs = false;
                 }catch(Exception ex){
                     Log($"Moving temp into place failed: {ex.Message}. Restoring original.");
-                    restoreBackup(backup, src, Log);
+                    await restoreBackupAsync(backup, src, Log).ConfigureAwait(false);
                     throw new Exception($"Couldn't put the trimmed file in place; the original was restored. ({ex.Message})");
                 }
 
@@ -165,8 +168,8 @@ namespace ClipMixer{
                     Log($"Post-replace check failed: {ex.Message}. Rolling back.");
                     string failed = FileOps.uniquePath(dir, name + TempMarker, ext);
                     try{
-                        File.Move(src, failed);
-                        restoreBackup(backup, src, Log);
+                        await FileOps.retryAsync(() => File.Move(src, failed), CancellationToken.None).ConfigureAwait(false);
+                        await restoreBackupAsync(backup, src, Log).ConfigureAwait(false);
                         try{await FileOps.deleteAsync(failed, false).ConfigureAwait(false);}catch{}
                     }catch(Exception rex){
                         throw new Exception($"Post-replace check failed and rollback failed. Your original is safe at: {backup} ({rex.Message})");
@@ -206,10 +209,10 @@ namespace ClipMixer{
             }
         }
 
-        private static void restoreBackup(string backup, string src, Action<string> log){
+        private static async Task restoreBackupAsync(string backup, string src, Action<string> log){
             try{
                 //File.Move wont overwrite so this cant clobber whatevers at src
-                File.Move(backup, src);
+                await FileOps.retryAsync(() => File.Move(backup, src), CancellationToken.None, attempts: 40).ConfigureAwait(false);
                 log("Original restored.");
             }catch(Exception ex){
                 log($"RESTORE FAILED: {ex.Message}");

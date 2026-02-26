@@ -61,7 +61,7 @@ namespace ClipMixer{
             ConfirmDeleteCheck.IsChecked = settings.ConfirmDelete;
             AutoPlayCheck.IsChecked = settings.AutoPlay;
 
-            processor = new ClipProcessor(runner, AppSettings.LogDir);
+            processor = new ClipProcessor(runner, AppSettings.LogDir) { ReleaseFileAsync = releaseFromPlayerAsync };
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
             Mpv.TimePosChanged += t => {
@@ -513,6 +513,15 @@ namespace ClipMixer{
             suppressSelection = false;
             ClipList.ScrollIntoView(entry);
             _ = loadClipAsync(entry);
+        }
+
+        //trim job calls this right before it renames the original
+        private Task releaseFromPlayerAsync(string path){
+            return Dispatcher.InvokeAsync(async () => {
+                if(string.Equals(Mpv.LoadedPath, path, StringComparison.OrdinalIgnoreCase)){
+                    await Mpv.stopAsync();
+                }
+            }).Task.Unwrap();
         }
 
         private async Task runJobsAsync(){
