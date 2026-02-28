@@ -57,6 +57,7 @@ namespace ClipMixer{
             JobList.ItemsSource = jobs;
 
             SubfoldersCheck.IsChecked = settings.IncludeSubfolders;
+            PreciseCheck.IsChecked = settings.PreciseCut;
             RecycleCheck.IsChecked = settings.UseRecycleBin;
             ConfirmDeleteCheck.IsChecked = settings.ConfirmDelete;
             AutoPlayCheck.IsChecked = settings.AutoPlay;
@@ -421,7 +422,9 @@ namespace ClipMixer{
                 CutInfoText.Text = "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
                 return;
             }
-            CutInfoText.Text = "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
+            CutInfoText.Text = PreciseCheck.IsChecked == true
+                ? "Frame-accurate: the trimmed clip starts exactly at In (video is re-encoded to H.264)."
+                : "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
         }
 
         //-------- trim & replace / delete --------
@@ -445,6 +448,7 @@ namespace ClipMixer{
                 SourcePath = entry.FullPath,
                 InSec = inSec,
                 OutSec = outSec,
+                PreciseCut = PreciseCheck.IsChecked == true,
                 UseRecycleBin = RecycleCheck.IsChecked == true,
             };
 
@@ -596,10 +600,12 @@ namespace ClipMixer{
         private void optionChanged(object sender, RoutedEventArgs e){
             if(!IsLoaded){return;}
             saveSettings();
+            if(ReferenceEquals(sender, PreciseCheck)){updateCutInfo();}
         }
 
         private void saveSettings(){
             settings.IncludeSubfolders = SubfoldersCheck.IsChecked == true;
+            settings.PreciseCut = PreciseCheck.IsChecked == true;
             settings.UseRecycleBin = RecycleCheck.IsChecked == true;
             settings.ConfirmDelete = ConfirmDeleteCheck.IsChecked == true;
             settings.AutoPlay = AutoPlayCheck.IsChecked == true;

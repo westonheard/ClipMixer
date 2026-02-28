@@ -6,6 +6,7 @@ namespace ClipMixer{
     public sealed class AppSettings{
         public string? LastFolder { get; set; }
         public bool IncludeSubfolders { get; set; } = true;
+        public bool PreciseCut { get; set; }
         public bool UseRecycleBin { get; set; } = true;
         public bool ConfirmDelete { get; set; } = true;
         public bool AutoPlay { get; set; } = true;

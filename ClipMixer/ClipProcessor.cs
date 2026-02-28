@@ -12,6 +12,9 @@ namespace ClipMixer{
         public double InSec { get; init; }
         public double OutSec { get; init; }
 
+        //true = reencode h264 so it starts exactly at In, false = lossless copy from the keyframe before In
+        public bool PreciseCut { get; init; }
+
         public bool UseRecycleBin { get; init; } = true;
     }
 
@@ -70,7 +73,7 @@ namespace ClipMixer{
 
             List<string> warnings = new List<string>();
             Log($"Source: {src}");
-            Log($"Request: in={req.InSec:0.###} out={req.OutSec:0.###} recycle={req.UseRecycleBin}");
+            Log($"Request: in={req.InSec:0.###} out={req.OutSec:0.###} precise={req.PreciseCut} recycle={req.UseRecycleBin}");
 
             bool tempIsOurs = false;
             try{
@@ -87,7 +90,7 @@ namespace ClipMixer{
 
                 //ffmpeg drops packets w/ dts before seekRef, so w/ b-frames it has to sit on the keyframes dts. this dts shit took forever to figure out
                 double cutStart = inSec, seekRef = inSec;
-                if(inSec > 0){
+                if(!req.PreciseCut && inSec > 0){
                     (double kPts, double? kDts) = await runner.getKeyframeInfoAsync(src, inSec, srcInfo.StartTime, ct).ConfigureAwait(false);
                     cutStart = kPts;
                     seekRef = kPts <= 0 ? 0 : Math.Max(0, Math.Min(kPts, kDts ?? kPts - 0.25) - 0.0005);
@@ -102,7 +105,8 @@ namespace ClipMixer{
                 if(File.Exists(tmp)){await FileOps.deleteAsync(tmp, false, ct).ConfigureAwait(false);}
                 tempIsOurs = true;
 
-                List<string> args = buildTrimArgs(src, tmp, seekRef, toEnd ? (double?)null : expectedDur, srcInfo, expVideo > 0);
+                List<string> args = buildTrimArgs(src, tmp, seekRef, toEnd ? (double?)null : expectedDur,
+                    req.PreciseCut, srcInfo, expVideo > 0);
                 Log("ffmpeg " + string.Join(" ", args.Select(quote)));
                 progress?.Invoke("Exporting", 0);
 
@@ -221,7 +225,8 @@ namespace ClipMixer{
         }
 
         //start = output side seek in source time (0 = beginning), duration null = copy to the end
-        public List<string> buildTrimArgs(string src, string dst, double start, double? duration, MediaInfo srcInfo, bool hasVideo){
+        public List<string> buildTrimArgs(string src, string dst, double start, double? duration, bool preciseCut,
+            MediaInfo srcInfo, bool hasVideo){
             List<string> a = new List<string> { "-hide_banner", "-nostdin", "-y", "-loglevel", "warning", "-progress", "pipe:1", "-nostats" };
 
             //fast input seek to a few sec before, then output seek drops everything before start. input seek alone lets copied audio start before the video
@@ -231,7 +236,14 @@ namespace ClipMixer{
             if(start > 0){a.AddRange(new[] { "-ss", FfmpegRunner.sec(start - coarse) });}
             if(duration.HasValue){a.AddRange(new[] { "-t", FfmpegRunner.sec(duration.Value) });}
 
-            if(hasVideo){a.AddRange(new[] { "-map", "0:V", "-c:v", "copy" });}
+            if(hasVideo){
+                a.AddRange(new[] { "-map", "0:V" });
+                if(preciseCut){
+                    a.AddRange(new[] { "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p" });
+                }else{
+                    a.AddRange(new[] { "-c:v", "copy" });
+                }
+            }
 
             //every audio track copied as is. track names set by hand because the mp4 muxer drops them even on a plain copy
             List<StreamInfo> srcAudio = srcInfo.Streams.Where(s => s.CodecType == "audio").ToList();

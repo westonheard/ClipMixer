@@ -207,6 +207,9 @@
                     <StackPanel Grid.Column="1" Margin="16,0,0,0">
                         <TextBlock x:Name="CutInfoText" TextWrapping="Wrap"/>
                         <WrapPanel Margin="0,6,0,0">
+                            <CheckBox x:Name="PreciseCheck" Margin="0,0,16,4" Checked="optionChanged" Unchecked="optionChanged"
+                                      Content="Frame-accurate start (re-encodes, slower)"
+                                      ToolTip="Off: lossless, starts on the nearest keyframe at/before In (fast).&#x0a;On: re-encodes video to H.264 so it starts exactly at In."/>
                             <CheckBox x:Name="RecycleCheck" Margin="0,0,16,4" Content="Use Recycle Bin" Checked="optionChanged" Unchecked="optionChanged"
                                       ToolTip="Send deleted clips and replaced originals to the Recycle Bin"/>
                             <CheckBox x:Name="ConfirmDeleteCheck" Margin="0,0,16,4" Content="Confirm deletes" Checked="optionChanged" Unchecked="optionChanged"/>
