@@ -80,7 +80,10 @@ namespace ClipMixer{
         }
 
         //last keyframe at/before sec, lossless cut can only start clean on one. times relative to startTime like mpv/-ss, ffprobe packet times are absolute
-        //also gives the dts, w/ b-frames dts is earlier than pts and ffmpegs output seek drops packets by dts
+        public async Task<double> getKeyframeAtOrBeforeAsync(string path, double sec, double startTime = 0, CancellationToken ct = default) =>
+            (await getKeyframeInfoAsync(path, sec, startTime, ct).ConfigureAwait(false)).Pts;
+
+        //same thing but also gives the dts, w/ b-frames dts is earlier than pts and ffmpegs output seek drops packets by dts
         public async Task<(double Pts, double? Dts)> getKeyframeInfoAsync(string path, double sec, double startTime = 0, CancellationToken ct = default){
             if(sec <= 0){return (0, 0);}
             double abs = sec + startTime;

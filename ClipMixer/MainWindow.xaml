@@ -164,6 +164,8 @@
                     SizeChanged="timelineSizeChanged" MouseLeftButtonDown="timelineMouseLeftButtonDown">
                 <Rectangle x:Name="TimelineTrack" Height="6" RadiusX="3" RadiusY="3" Fill="#55555F"/>
                 <Rectangle x:Name="TimelineSelection" Height="6" RadiusX="3" RadiusY="3" Fill="#4A9EFF" Opacity="0.85"/>
+                <Rectangle x:Name="KeyframeMarker" Width="2" Height="18" Fill="#FFB347" Visibility="Collapsed"
+                           ToolTip="Where a lossless cut really starts (nearest keyframe at/before In)"/>
                 <Thumb x:Name="InThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#7CD992" ToolTip="In (I)"
                        DragStarted="markerDragStarted" DragCompleted="markerDragCompleted" DragDelta="inThumbDragDelta"/>
                 <Thumb x:Name="OutThumb" Style="{StaticResource MarkerThumbStyle}" Foreground="#FF7C7C" ToolTip="Out (O)"

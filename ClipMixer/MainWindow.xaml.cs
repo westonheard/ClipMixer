@@ -46,6 +46,9 @@ namespace ClipMixer{
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
 
+        private readonly DispatcherTimer keyframeDebounce;
+        private int keyframeToken;
+
         //mpv time updates get squashed into one ui update at a time
         private double latestTime;
         private int timeUpdatePending;
@@ -63,6 +66,9 @@ namespace ClipMixer{
             AutoPlayCheck.IsChecked = settings.AutoPlay;
 
             processor = new ClipProcessor(runner, AppSettings.LogDir) { ReleaseFileAsync = releaseFromPlayerAsync };
+
+            keyframeDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            keyframeDebounce.Tick += (_, __) => {keyframeDebounce.Stop(); updateCutInfo();};
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
             Mpv.TimePosChanged += t => {
@@ -248,6 +254,7 @@ namespace ClipMixer{
             FileText.ToolTip = entry.FullPath;
             ClipInfoText.Text = entry.Folder;
             CutInfoText.Text = "";
+            KeyframeMarker.Visibility = Visibility.Collapsed;
             updateMarkerTexts();
             updateTimelineVisuals();
 
@@ -295,6 +302,7 @@ namespace ClipMixer{
             ClipInfoText.Text = "";
             CutInfoText.Text = "";
             TimeText.Text = "";
+            KeyframeMarker.Visibility = Visibility.Collapsed;
             updateMarkerTexts();
             updateTimelineVisuals();
             await Mpv.stopAsync();
@@ -391,7 +399,8 @@ namespace ClipMixer{
         private void markersChanged(){
             updateMarkerTexts();
             updateTimelineVisuals();
-            updateCutInfo();
+            keyframeDebounce.Stop();
+            keyframeDebounce.Start();
         }
 
         private void updateMarkerTexts(){
@@ -416,15 +425,52 @@ namespace ClipMixer{
         }
 
         private void updateCutInfo(){
+            KeyframeMarker.Visibility = Visibility.Collapsed;
+            updateTimelineVisuals();
+            CutInfoText.Foreground = (Brush)FindResource("TextFg");
             if(current == null || durationSec <= 0){CutInfoText.Text = ""; return;}
 
-            if(inSec <= 0.05 && outSec >= durationSec - 0.05){
+            if(this.inSec <= 0.05 && outSec >= durationSec - 0.05){
                 CutInfoText.Text = "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
                 return;
             }
-            CutInfoText.Text = PreciseCheck.IsChecked == true
-                ? "Frame-accurate: the trimmed clip starts exactly at In (video is re-encoded to H.264)."
-                : "Lossless video cut (no re-encode), starts on the nearest keyframe before In.";
+            if(PreciseCheck.IsChecked == true){
+                CutInfoText.Text = "Frame-accurate: the trimmed clip starts exactly at In (video is re-encoded to H.264).";
+                return;
+            }
+            if(this.inSec <= 0.0005){
+                CutInfoText.Text = "Lossless video cut (no re-encode).";
+                return;
+            }
+
+            string path = current.FullPath;
+            double inSec = this.inSec;
+            double startTime = info?.StartTime ?? 0;
+            int token = ++keyframeToken;
+            CutInfoText.Text = "Finding the nearest keyframe...";
+            _ = Task.Run(async () => {
+                try{
+                    double k = await runner.getKeyframeAtOrBeforeAsync(path, inSec, startTime);
+                    await Dispatcher.InvokeAsync(() => {
+                        if(token != keyframeToken || current?.FullPath != path){return;}
+                        double diff = inSec - k;
+                        if(diff < 0.05){
+                            CutInfoText.Text = "Lossless video cut (no re-encode). In is on a keyframe.";
+                        }else{
+                            CutInfoText.Text = $"Lossless cut starts at the keyframe at {FfmpegRunner.formatTs(k)}  ({diff:0.00}s before In)." +
+                                               (diff > 1 ? " Tick 'Frame-accurate start' for an exact start." : "");
+                            if(diff > 1){CutInfoText.Foreground = (Brush)FindResource("WarnFg");}
+                            KeyframeMarker.Tag = k;
+                            KeyframeMarker.Visibility = Visibility.Visible;
+                            updateTimelineVisuals();
+                        }
+                    });
+                }catch(Exception ex){
+                    await Dispatcher.InvokeAsync(() => {
+                        if(token == keyframeToken){CutInfoText.Text = "Couldn't read keyframes: " + ex.Message;}
+                    });
+                }
+            });
         }
 
         //-------- trim & replace / delete --------
@@ -485,6 +531,7 @@ namespace ClipMixer{
             deleting = true;
             int idx = clips.IndexOf(entry);
             loadToken++;
+            keyframeToken++;
             current = null;
             probeDone = false;
             durationSec = 0;
@@ -525,6 +572,7 @@ namespace ClipMixer{
                 if(string.Equals(Mpv.LoadedPath, path, StringComparison.OrdinalIgnoreCase)){
                     await Mpv.stopAsync();
                 }
+                if(string.Equals(current?.FullPath, path, StringComparison.OrdinalIgnoreCase)){keyframeToken++;}
             }).Task.Unwrap();
         }
 
@@ -768,7 +816,7 @@ namespace ClipMixer{
             bool has = current != null && durationSec > 0;
             Visibility vis = has ? Visibility.Visible : Visibility.Hidden;
             TimelineSelection.Visibility = InThumb.Visibility = OutThumb.Visibility = PlayheadThumb.Visibility = vis;
-            if(!has){return;}
+            if(!has){KeyframeMarker.Visibility = Visibility.Collapsed; return;}
 
             double xIn = xFromTime(inSec);
             double xOut = xFromTime(outSec);
@@ -781,6 +829,11 @@ namespace ClipMixer{
             Canvas.SetTop(InThumb, 0);
             Canvas.SetLeft(OutThumb, xOut - OutThumb.Width / 2.0);
             Canvas.SetTop(OutThumb, 0);
+
+            if(KeyframeMarker.Visibility == Visibility.Visible && KeyframeMarker.Tag is double k){
+                Canvas.SetLeft(KeyframeMarker, xFromTime(k) - 1);
+                Canvas.SetTop(KeyframeMarker, TrackTop - 6);
+            }
 
             updatePlayheadVisual();
         }
