@@ -45,9 +45,14 @@ namespace ClipMixer{
         private bool deleting;
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
+        private string? appliedGraph;
 
         private readonly DispatcherTimer keyframeDebounce;
         private int keyframeToken;
+        private readonly DispatcherTimer fxDebounce;
+
+        private readonly ObservableCollection<TrackSettings> tracks = new();
+        private bool suspendAudioEvents;
 
         //mpv time updates get squashed into one ui update at a time
         private double latestTime;
@@ -58,6 +63,8 @@ namespace ClipMixer{
 
             ClipList.ItemsSource = clips;
             JobList.ItemsSource = jobs;
+            TrackList.ItemsSource = tracks;
+            AudioExpander.IsExpanded = settings.AudioPanelOpen;
 
             SubfoldersCheck.IsChecked = settings.IncludeSubfolders;
             PreciseCheck.IsChecked = settings.PreciseCut;
@@ -69,6 +76,8 @@ namespace ClipMixer{
 
             keyframeDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             keyframeDebounce.Tick += (_, __) => {keyframeDebounce.Stop(); updateCutInfo();};
+            fxDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(350) };
+            fxDebounce.Tick += (_, __) => {fxDebounce.Stop(); reapplyPreviewGraph();};
 
             //mpv fires these on its own thread, always BeginInvoke never a blocking Invoke
             Mpv.TimePosChanged += t => {
@@ -79,10 +88,13 @@ namespace ClipMixer{
             };
             Mpv.DurationChanged += d => Dispatcher.BeginInvoke(() => onMpvDuration(d));
             Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
+            Mpv.GraphRejected += () => Dispatcher.BeginInvoke(() =>
+                status("The player couldn't apply the audio settings to this clip, so you're hearing it unprocessed."));
 
             Loaded += onLoaded;
             Closing += onClosing;
 
+            updateAudioState();
             updateMarkerTexts();
             updateCounts();
             status("Open a folder of clips to begin (Ctrl+O).");
@@ -239,6 +251,7 @@ namespace ClipMixer{
             int token = ++loadToken;
             current = entry;
             this.info = null;
+            appliedGraph = null;
             durationSec = 0;
             inSec = outSec = playSec = 0;
             outUserSet = false;
@@ -248,6 +261,7 @@ namespace ClipMixer{
             if(Mpv.LoadedPath != null && !string.Equals(Mpv.LoadedPath, entry.FullPath, StringComparison.OrdinalIgnoreCase)){
                 _ = Mpv.stopAsync();
             }
+            clearAudio();
             TimeText.Text = "";
 
             FileText.Text = entry.FileName;
@@ -284,7 +298,10 @@ namespace ClipMixer{
                     : "Set In (I) and Out (O), then Enter to trim - or Del to delete, N to skip.");
             }
 
-            Mpv.load(entry.FullPath, null, AutoPlayCheck.IsChecked != true);
+            if(info != null){setupAudio(info);}
+
+            appliedGraph = buildPreviewGraph();
+            Mpv.load(entry.FullPath, appliedGraph, null, AutoPlayCheck.IsChecked != true);
             updateCutInfo();
         }
 
@@ -305,6 +322,7 @@ namespace ClipMixer{
             KeyframeMarker.Visibility = Visibility.Collapsed;
             updateMarkerTexts();
             updateTimelineVisuals();
+            clearAudio();
             await Mpv.stopAsync();
         }
 
@@ -431,7 +449,9 @@ namespace ClipMixer{
             if(current == null || durationSec <= 0){CutInfoText.Text = ""; return;}
 
             if(this.inSec <= 0.05 && outSec >= durationSec - 0.05){
-                CutInfoText.Text = "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
+                CutInfoText.Text = AudioChanged
+                    ? "In/Out cover the whole clip: Enter keeps its full length and only applies the audio changes."
+                    : "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
                 return;
             }
             if(PreciseCheck.IsChecked == true){
@@ -484,17 +504,26 @@ namespace ClipMixer{
             if(entry == null){status("No clip selected."); return;}
             if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
             if(outSec - inSec < 0.1){status("Out must be after In."); return;}
-            if(inSec <= 0.05 && outSec >= durationSec - 0.05){
+            AudioPlan? plan = currentPlan();
+            bool audioChanged = plan != null && !plan.IsPassthrough;
+            bool fullLength = inSec <= 0.05 && outSec >= durationSec - 0.05;
+            if(fullLength && !audioChanged){
                 status("In/Out cover the whole clip - nothing to trim. Set In (I) / Out (O) first, or press N to skip.");
                 return;
+            }
+            if(plan != null && plan.Tracks.Count > 0 && plan.OutputTrackCount == 0){
+                MessageBoxResult r = MessageBox.Show(this, "Every audio track is unticked, so the trimmed clip will have NO audio at all.\n\nTrim it without audio?",
+                    "No audio", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if(r != MessageBoxResult.Yes || !ReferenceEquals(entry, current) || deleting){return;}
             }
 
             TrimRequest req = new TrimRequest
             {
                 SourcePath = entry.FullPath,
-                InSec = inSec,
-                OutSec = outSec,
-                PreciseCut = PreciseCheck.IsChecked == true,
+                InSec = fullLength ? 0 : inSec,
+                OutSec = fullLength ? durationSec : outSec,
+                PreciseCut = PreciseCheck.IsChecked == true && !fullLength,
+                Audio = audioChanged ? plan : null,
                 UseRecycleBin = RecycleCheck.IsChecked == true,
             };
 
@@ -509,7 +538,9 @@ namespace ClipMixer{
             _ = goToIndexAfterRemovalAsync(idx);
 
             jobQueue.Writer.TryWrite(job);
-            status($"Queued: {entry.FileName}  ({formatDur(keepLen)}). It's replaced only after the new file is verified.");
+            status(fullLength
+                ? $"Queued: {entry.FileName}  (full length, audio changes only). It's replaced only after the new file is verified."
+                : $"Queued: {entry.FileName}  ({formatDur(keepLen)}). It's replaced only after the new file is verified.");
             updateCounts();
         }
 
@@ -651,12 +682,120 @@ namespace ClipMixer{
             if(ReferenceEquals(sender, PreciseCheck)){updateCutInfo();}
         }
 
+        //-------- audio tracks --------
+
+        private void setupAudio(MediaInfo info){
+            List<StreamInfo> audio = info.Streams.Where(s => s.CodecType == "audio").ToList();
+
+            suspendAudioEvents = true;
+            try{
+                foreach(TrackSettings t in tracks){t.Changed -= onAudioChanged;}
+                tracks.Clear();
+                for(int i = 0; i < audio.Count; i++){
+                    StreamInfo s = audio[i];
+                    string label = $"{i + 1}. {s.DisplayName ?? $"Track {i + 1}"}";
+                    string chans = s.Channels switch {1 => "mono", 2 => "stereo", > 2 => $"{s.Channels} ch", _ => ""};
+                    TrackSettings t = new TrackSettings(i, label, $"{s.CodecName?.ToUpperInvariant()} {chans}".Trim(), s.Channels);
+                    t.Changed += onAudioChanged;
+                    tracks.Add(t);
+                }
+            }finally{suspendAudioEvents = false;}
+
+            updateAudioState();
+        }
+
+        private void clearAudio(){
+            foreach(TrackSettings t in tracks){t.Changed -= onAudioChanged;}
+            tracks.Clear();
+            updateAudioState();
+        }
+
+        private AudioPlan? currentPlan(){
+            if(info == null || tracks.Count != info.AudioTrackCount){return null;}
+            return new AudioPlan { Tracks = tracks.Select(t => t.toPlan()).ToList() };
+        }
+
+        private bool AudioChanged => currentPlan() is { IsPassthrough: false };
+
+        private void onAudioChanged(){
+            if(suspendAudioEvents || !IsLoaded){return;}
+            updateAudioState();
+            if(current != null && durationSec > 0 && inSec <= 0.05 && outSec >= durationSec - 0.05){updateCutInfo();}
+            fxDebounce.Stop();
+            fxDebounce.Start();
+        }
+
+        private void updateAudioState(){
+            AudioPlan? plan = currentPlan();
+            AudioPlanText.Foreground = (Brush)FindResource("TextFg");
+            if(current == null || plan == null){
+                AudioPlanText.Text = "";
+                AudioHeaderText.Text = "Audio tracks";
+                return;
+            }
+            int n = plan.Tracks.Count;
+            if(n == 0){
+                AudioPlanText.Text = "This clip has no audio.";
+                AudioHeaderText.Text = "Audio tracks (no audio in this clip)";
+                return;
+            }
+
+            if(plan.IsPassthrough){
+                AudioPlanText.Text = n == 1 ? "Audio: copied as-is (lossless)." : $"Audio: all {n} tracks copied as-is (lossless).";
+                AudioHeaderText.Text = $"Audio tracks ({n} track{(n == 1 ? "" : "s")}, untouched)";
+            }else{
+                List<string> parts = new List<string> { "Audio: " + plan.describe() + "." };
+                if(plan.OutputTrackCount == 0){parts.Add("The trimmed clip will have NO audio.");}
+                if(plan.Tracks.Any(t => t.Keep && !t.IsUntouched)){parts.Add("Changed audio is re-encoded (AAC 256 kbps).");}
+                AudioPlanText.Text = string.Join(" ", parts);
+                AudioHeaderText.Text = $"Audio tracks ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
+                if(plan.Tracks.Any(t => !t.Keep)){AudioPlanText.Foreground = (Brush)FindResource("WarnFg");}
+            }
+        }
+
+        private string? buildPreviewGraph(){
+            AudioPlan? plan = currentPlan();
+            if(plan == null){return null;}
+            return AudioGraph.buildPreview(plan);
+        }
+
+        private void audioExpanderChanged(object sender, RoutedEventArgs e){
+            if(IsLoaded){settings.AudioPanelOpen = AudioExpander.IsExpanded;}
+        }
+
+        private void resetAudioClick(object sender, RoutedEventArgs e){
+            suspendAudioEvents = true;
+            try{
+                foreach(TrackSettings t in tracks){
+                    t.Volume = 1;
+                    t.Keep = true;
+                }
+            }finally{suspendAudioEvents = false;}
+            onAudioChanged();
+        }
+
+        private void volumeTextMouseDown(object sender, MouseButtonEventArgs e){
+            if((sender as FrameworkElement)?.DataContext is TrackSettings t){t.Volume = 1;}
+        }
+
+        private void reapplyPreviewGraph(){
+            if(current == null || info == null){return;}
+            //double pos = playSec;
+            double pos = Mpv.getTimePosSeconds();
+            string? graph = buildPreviewGraph();
+            if(graph == appliedGraph){return;}
+            appliedGraph = graph;
+            //changing the graph on a playing file glitches the video so just reload at the same spot
+            Mpv.load(current.FullPath, graph, pos, Mpv.IsPaused);
+        }
+
         private void saveSettings(){
             settings.IncludeSubfolders = SubfoldersCheck.IsChecked == true;
             settings.PreciseCut = PreciseCheck.IsChecked == true;
             settings.UseRecycleBin = RecycleCheck.IsChecked == true;
             settings.ConfirmDelete = ConfirmDeleteCheck.IsChecked == true;
             settings.AutoPlay = AutoPlayCheck.IsChecked == true;
+            settings.AudioPanelOpen = AudioExpander.IsExpanded;
             settings.save();
         }
 

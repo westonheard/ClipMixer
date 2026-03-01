@@ -14,6 +14,7 @@ namespace ClipMixer{
         public event Action? FileLoaded;
         public event Action? FileEnded;//todo: nothing listens to this yet, maybe auto play next clip
         public event Action<string>? LogMessage;
+        public event Action? GraphRejected;//audio graph didnt work on this file, playing it plain
 
         private IntPtr mpv;
         private Thread? eventThread;
@@ -82,7 +83,17 @@ namespace ClipMixer{
 
         public bool IsAlive => mpv != IntPtr.Zero && running;
 
-        public void load(string path, double? startSec = null, bool? paused = null){
+        //if a load w/ a filter graph fails we reload w/o it, one record so path + options always match
+        private sealed record Fallback(string Path, string Options);
+        private volatile Fallback? fallback;
+
+        //event thread only, matches FILE_LOADED/END_FILE to the right load
+        private long startedEntryId = -1;
+        private long loadedEntryId = -1;
+
+        //lavfi-complex goes in as a per file option. changing it while playing restarts the decoder mid gop
+        //and u get garbage frames till the next keyframe, so to change the graph just load again w/ startSec
+        public void load(string path, string? lavfiComplex = null, double? startSec = null, bool? paused = null){
             if(mpv == IntPtr.Zero){return;}
             LoadedPath = path;
 
@@ -92,6 +103,12 @@ namespace ClipMixer{
             }
             if(paused.HasValue){
                 opts.Add("pause=" + (paused.Value ? "yes" : "no"));
+            }
+            string plainOpts = string.Join(",", opts);
+
+            fallback = string.IsNullOrEmpty(lavfiComplex) ? null : new Fallback(path, plainOpts);
+            if(!string.IsNullOrEmpty(lavfiComplex)){
+                opts.Insert(0, $"lavfi-complex=%{System.Text.Encoding.UTF8.GetByteCount(lavfiComplex)}%{lavfiComplex}");
             }
 
             loadFile(path, string.Join(",", opts));
@@ -107,6 +124,7 @@ namespace ClipMixer{
             if(mpv == IntPtr.Zero){return;}
 
             LoadedPath = null;
+            fallback = null;
             if(tryGetFlag("idle-active", out int idle) && idle != 0){
                 return;
             }
@@ -226,14 +244,32 @@ namespace ClipMixer{
                             handlePropertyChange(ev.data);
                             break;
 
+                        case mpv_event_id.MPV_EVENT_START_FILE:
+                            if(ev.data != IntPtr.Zero){startedEntryId = Marshal.ReadInt64(ev.data, 0);}
+                            break;
+
                         case mpv_event_id.MPV_EVENT_FILE_LOADED:
+                            loadedEntryId = startedEntryId;
                             FileLoaded?.Invoke();
                             break;
 
-                        case mpv_event_id.MPV_EVENT_END_FILE:
+                        case mpv_event_id.MPV_EVENT_END_FILE:{
+                            //{ int reason; int error; int64 playlist_entry_id; ... } so id is at offset 8
+                            int reason = ev.data != IntPtr.Zero ? Marshal.ReadInt32(ev.data, 0) : -1;
+                            long endId = ev.data != IntPtr.Zero ? Marshal.ReadInt64(ev.data, 8) : -1;
+                            Fallback? fb = fallback;
+                            if(reason == MPV_END_FILE_REASON_ERROR && endId == startedEntryId && endId != loadedEntryId &&
+                                fb != null && fb.Path == LoadedPath){
+                                fallback = null;
+                                LogMessage?.Invoke("[warn] audio mix graph rejected; loading without it");
+                                loadFile(fb.Path, fb.Options);
+                                GraphRejected?.Invoke();
+                                break;
+                            }
                             FileEnded?.Invoke();
                             completeEndFileWaiters();
                             break;
+                        }
 
                         case mpv_event_id.MPV_EVENT_IDLE:
                             completeEndFileWaiters();
@@ -431,6 +467,8 @@ namespace ClipMixer{
             public IntPtr values;
             public IntPtr keys;//only for maps
         }
+
+        private const int MPV_END_FILE_REASON_ERROR = 4;
 
         private const string Lib = "mpv-1.dll";
 

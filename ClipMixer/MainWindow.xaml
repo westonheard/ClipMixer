@@ -208,6 +208,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Margin="16,0,0,0">
                         <TextBlock x:Name="CutInfoText" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="AudioPlanText" TextWrapping="Wrap" Margin="0,3,0,0"/>
                         <WrapPanel Margin="0,6,0,0">
                             <CheckBox x:Name="PreciseCheck" Margin="0,0,16,4" Checked="optionChanged" Unchecked="optionChanged"
                                       Content="Frame-accurate start (re-encodes, slower)"
@@ -220,6 +221,47 @@
                     </StackPanel>
                 </Grid>
             </Border>
+
+            <!-- audio, per track volume -->
+            <Expander x:Name="AudioExpander" Grid.Row="6" Margin="0,8,0,0" Expanded="audioExpanderChanged" Collapsed="audioExpanderChanged">
+                <Expander.Header>
+                    <TextBlock x:Name="AudioHeaderText" Text="Audio tracks" FontWeight="SemiBold"/>
+                </Expander.Header>
+                <Border Style="{StaticResource Panel}" Margin="0,6,0,0">
+                    <DockPanel>
+                        <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                            <Button Click="resetAudioClick" Margin="0,0,6,4" Padding="8,3" ToolTip="Reset every track to untouched">Reset audio</Button>
+                        </WrapPanel>
+                        <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap" Margin="0,0,0,6"
+                                   Text="The player plays all kept tracks together."/>
+                        <ScrollViewer MaxHeight="250" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl x:Name="TrackList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate DataType="{x:Type local:TrackSettings}">
+                                        <Border Background="{StaticResource InsetBg}" CornerRadius="4" Padding="8,6" Margin="0,0,0,6">
+                                            <StackPanel>
+                                                <WrapPanel>
+                                                    <CheckBox IsChecked="{Binding Keep}" Margin="0,0,10,2" MinWidth="150"
+                                                              ToolTip="Untick to leave this track out of the file (or the mix)">
+                                                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold"/>
+                                                    </CheckBox>
+                                                    <TextBlock Text="{Binding Info}" Foreground="{StaticResource DimFg}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,2"/>
+                                                    <TextBlock Text="Volume" VerticalAlignment="Center" Margin="0,0,6,2"/>
+                                                    <Slider Width="170" Minimum="0" Maximum="3" SmallChange="0.05" LargeChange="0.25" VerticalAlignment="Center"
+                                                            Value="{Binding Volume, Mode=TwoWay}" Focusable="False" IsMoveToPointEnabled="True" Margin="0,0,6,2"
+                                                            ToolTip="0% to 300%. Click the value to reset to 100%."/>
+                                                    <TextBlock Text="{Binding VolumeText}" Width="108" VerticalAlignment="Center" Margin="0,0,10,2"
+                                                               MouseLeftButtonDown="volumeTextMouseDown" Cursor="Hand" ToolTip="Click to reset to 100%"/>
+                                                </WrapPanel>
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+            </Expander>
 
             <!-- status + key list -->
             <StackPanel Grid.Row="7" Margin="0,8,0,0">

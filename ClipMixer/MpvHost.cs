@@ -14,6 +14,7 @@ namespace ClipMixer{
         public event Action<bool>? PauseChanged;
         public event Action? FileLoaded;
         public event Action<string>? LogMessage;
+        public event Action? GraphRejected;
 
         private IntPtr hwnd;
 
@@ -38,6 +39,7 @@ namespace ClipMixer{
                     p.PauseChanged += v => PauseChanged?.Invoke(v);
                     p.FileLoaded += () => FileLoaded?.Invoke();
                     p.LogMessage += m => LogMessage?.Invoke(m);
+                    p.GraphRejected += () => GraphRejected?.Invoke();
                     Player = p;
                 }catch(Exception ex){
                     InitError = ex.Message;
@@ -66,8 +68,8 @@ namespace ClipMixer{
         }
 
         public string? LoadedPath => Player?.LoadedPath;
-        public void load(string path, double? startSec = null, bool? paused = null) =>
-            Player?.load(path, startSec, paused);
+        public void load(string path, string? lavfiComplex = null, double? startSec = null, bool? paused = null) =>
+            Player?.load(path, lavfiComplex, startSec, paused);
         public Task stopAsync() => Player?.stopAsync() ?? Task.CompletedTask;
         public void play() => Player?.play();
         public void pause() => Player?.pause();

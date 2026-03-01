@@ -15,6 +15,8 @@ namespace ClipMixer{
         //true = reencode h264 so it starts exactly at In, false = lossless copy from the keyframe before In
         public bool PreciseCut { get; init; }
 
+        public AudioPlan? Audio { get; init; }//null = copy every track as is
+
         public bool UseRecycleBin { get; init; } = true;
     }
 
@@ -74,6 +76,7 @@ namespace ClipMixer{
             List<string> warnings = new List<string>();
             Log($"Source: {src}");
             Log($"Request: in={req.InSec:0.###} out={req.OutSec:0.###} precise={req.PreciseCut} recycle={req.UseRecycleBin}");
+            Log($"Audio: {(req.Audio == null || req.Audio.IsPassthrough ? "copy all tracks" : req.Audio.describe())}");
 
             bool tempIsOurs = false;
             try{
@@ -100,13 +103,15 @@ namespace ClipMixer{
                 double expectedDur = cutEnd - seekRef;
 
                 int expVideo = srcInfo.VideoTrackCount;//all video tracks get kept
+                AudioPlan? plan = req.Audio != null && req.Audio.IsPassthrough ? null : req.Audio;
+                (string? audioGraph, List<OutputAudioTrack> audioOut) = AudioGraph.buildExport(plan, srcInfo.AudioTrackCount);
 
                 ct.ThrowIfCancellationRequested();
                 if(File.Exists(tmp)){await FileOps.deleteAsync(tmp, false, ct).ConfigureAwait(false);}
                 tempIsOurs = true;
 
                 List<string> args = buildTrimArgs(src, tmp, seekRef, toEnd ? (double?)null : expectedDur,
-                    req.PreciseCut, srcInfo, expVideo > 0);
+                    req.PreciseCut, audioGraph, audioOut, srcInfo, expVideo > 0);
                 Log("ffmpeg " + string.Join(" ", args.Select(quote)));
                 progress?.Invoke("Exporting", 0);
 
@@ -121,7 +126,7 @@ namespace ClipMixer{
 
                 //make sure the temp actually plays all the way
                 progress?.Invoke("Verifying", 0);
-                MediaInfo outInfo = await verifyAsync(tmp, src, srcInfo, seekRef, cutEnd, expVideo,
+                MediaInfo outInfo = await verifyAsync(tmp, src, srcInfo, seekRef, cutEnd, expVideo, audioOut,
                     warnings, Log, p => progress?.Invoke("Verifying", p), ct).ConfigureAwait(false);
                 long tmpSize = new FileInfo(tmp).Length;
                 FileOps.flushToDisk(tmp);//verified bytes have to be on disk before the original goes anywhere
@@ -226,7 +231,7 @@ namespace ClipMixer{
 
         //start = output side seek in source time (0 = beginning), duration null = copy to the end
         public List<string> buildTrimArgs(string src, string dst, double start, double? duration, bool preciseCut,
-            MediaInfo srcInfo, bool hasVideo){
+            string? audioGraph, IReadOnlyList<OutputAudioTrack> audioOut, MediaInfo srcInfo, bool hasVideo){
             List<string> a = new List<string> { "-hide_banner", "-nostdin", "-y", "-loglevel", "warning", "-progress", "pipe:1", "-nostats" };
 
             //fast input seek to a few sec before, then output seek drops everything before start. input seek alone lets copied audio start before the video
@@ -245,14 +250,21 @@ namespace ClipMixer{
                 }
             }
 
-            //every audio track copied as is. track names set by hand because the mp4 muxer drops them even on a plain copy
+            //track names set by hand because the mp4 muxer drops them even on a plain copy
+            if(audioGraph != null){a.AddRange(new[] { "-filter_complex", audioGraph });}
             List<StreamInfo> srcAudio = srcInfo.Streams.Where(s => s.CodecType == "audio").ToList();
-            for(int k = 0; k < srcAudio.Count; k++){
-                a.AddRange(new[] { "-map", $"0:a:{k}", $"-c:a:{k}", "copy" });
+            for(int k = 0; k < audioOut.Count; k++){
+                OutputAudioTrack o = audioOut[k];
+                if(o.IsCopy){
+                    a.AddRange(new[] { "-map", $"0:a:{o.Sources[0]}", $"-c:a:{k}", "copy" });
+                }else{
+                    a.AddRange(new[] { "-map", $"[{o.FilterLabel}]", $"-c:a:{k}", "aac", $"-b:a:{k}", "256k" });
+                }
                 //mp4 "title" is what ffprobe/nvidia show as "name"
-                string? title = srcAudio[k].DisplayName;
+                StreamInfo? first = srcAudio.ElementAtOrDefault(o.Sources[0]);
+                string? title = first?.DisplayName;
                 if(title != null){a.AddRange(new[] { $"-metadata:s:a:{k}", "title=" + title });}
-                if(srcAudio[k].getTag("language") is {} lang){a.AddRange(new[] { $"-metadata:s:a:{k}", "language=" + lang });}
+                if(first?.getTag("language") is {} lang){a.AddRange(new[] { $"-metadata:s:a:{k}", "language=" + lang });}
             }
 
             //todo: shift chapters instead of just dropping them
@@ -270,10 +282,10 @@ namespace ClipMixer{
 
         //checks tracks, length, every stream covers the cut, then a full decode of all video + audio
         public async Task<MediaInfo> verifyAsync(string file, string src, MediaInfo srcInfo, double cutStart, double cutEnd,
-            int expVideo, List<string> warnings, Action<string> log,
+            int expVideo, IReadOnlyList<OutputAudioTrack> audioOut, List<string> warnings, Action<string> log,
             Action<double>? progress, CancellationToken ct){
             double sourceStartSpread = startSpread(srcInfo);
-            int expAudio = srcInfo.AudioTrackCount;
+            int expAudio = audioOut.Count;
             double expected = cutEnd - cutStart;
 
             MediaInfo info;
@@ -325,7 +337,7 @@ namespace ClipMixer{
             }
             if(outV.Count > 0){passes.Add(("0:V", videoNeed, "video"));}
             for(int k = 0; k < outA.Count; k++){
-                double need = Coverage(srcA.ElementAtOrDefault(k));
+                double need = audioOut[k].Sources.Select(i => Coverage(srcA.ElementAtOrDefault(i))).DefaultIfEmpty(expected).Max();
                 CheckStream(outA[k], need, $"Audio track {k + 1}");
                 passes.Add(($"0:a:{k}", need, $"audio track {k + 1}"));
             }

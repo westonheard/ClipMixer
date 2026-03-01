@@ -10,6 +10,7 @@ namespace ClipMixer{
         public bool UseRecycleBin { get; set; } = true;
         public bool ConfirmDelete { get; set; } = true;
         public bool AutoPlay { get; set; } = true;
+        public bool AudioPanelOpen { get; set; } = true;
 
         //localappdata\ClipMixer unless CLIPMIXER_DATA env var is set
         public static string DataDir =>
