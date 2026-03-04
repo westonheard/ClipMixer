@@ -53,6 +53,7 @@ namespace ClipMixer{
 
         private readonly ObservableCollection<TrackSettings> tracks = new();
         private bool suspendAudioEvents;
+        private int menuOpen;
 
         //mpv time updates get squashed into one ui update at a time
         private double latestTime;
@@ -682,7 +683,7 @@ namespace ClipMixer{
             if(ReferenceEquals(sender, PreciseCheck)){updateCutInfo();}
         }
 
-        //-------- audio tracks --------
+        //-------- audio tracks (volume/channels) --------
 
         private void setupAudio(MediaInfo info){
             List<StreamInfo> audio = info.Streams.Where(s => s.CodecType == "audio").ToList();
@@ -769,6 +770,7 @@ namespace ClipMixer{
                 foreach(TrackSettings t in tracks){
                     t.Volume = 1;
                     t.Keep = true;
+                    t.Channel = ChannelMode.AsRecorded;
                 }
             }finally{suspendAudioEvents = false;}
             onAudioChanged();
@@ -776,6 +778,25 @@ namespace ClipMixer{
 
         private void volumeTextMouseDown(object sender, MouseButtonEventArgs e){
             if((sender as FrameworkElement)?.DataContext is TrackSettings t){t.Volume = 1;}
+        }
+
+        private void channelClick(object sender, RoutedEventArgs e){
+            if(sender is not Button b || b.DataContext is not TrackSettings t){return;}
+            ContextMenu menu = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom };
+            foreach(ChannelMode mode in Enum.GetValues<ChannelMode>()){
+                MenuItem item = new MenuItem { Header = Effects.channelName(mode), IsCheckable = true, IsChecked = mode == t.Channel };
+                item.ToolTip = mode switch{
+                    ChannelMode.MonoMix => "One channel, heard in both ears. Use for a mic or track that sounds lopsided.",
+                    ChannelMode.LeftOnly => "One channel made from the left side only (e.g. a mic that only records on the left).",
+                    ChannelMode.RightOnly => "One channel made from the right side only.",
+                    _ => "Keep the track as it was recorded.",
+                };
+                item.Click += (_, __) => t.Channel = mode;
+                menu.Items.Add(item);
+            }
+            menu.Opened += (_, __) => menuOpen++;
+            menu.Closed += (_, __) => {menuOpen = Math.Max(0, menuOpen - 1); focusRoot();};
+            menu.IsOpen = true;
         }
 
         private void reapplyPreviewGraph(){
@@ -802,6 +823,7 @@ namespace ClipMixer{
         //-------- keyboard / mouse --------
 
         private void windowPreviewKeyDown(object sender, KeyEventArgs e){
+            if(menuOpen > 0){return;}//a popup menu is open, arrows/enter belong to it
             //while typing a time only enter (commit) + escape (revert) do stuff, del/enter must never hit the clip actions from a textbox
             if(Keyboard.FocusedElement is TextBox tb){
                 if(e.Key == Key.Enter){commitTextBox(tb); focusRoot(); e.Handled = true;}else if(e.Key == Key.Escape){updateMarkerTexts(); focusRoot(); e.Handled = true;}
@@ -839,7 +861,7 @@ namespace ClipMixer{
 
         private void windowPreviewMouseDown(object sender, MouseButtonEventArgs e){
             if(e.OriginalSource is DependencyObject d && findAncestor<TextBox>(d) == null){
-                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(focusRoot));
+                Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => {if(menuOpen == 0){focusRoot();}}));
             }
         }
 

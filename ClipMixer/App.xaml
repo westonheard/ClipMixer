@@ -66,6 +66,16 @@
             <Setter Property="Padding" Value="16,9"/>
         </Style>
 
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="{StaticResource PanelBg}"/>
+            <Setter Property="Foreground" Value="{StaticResource TextFg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrushDim}"/>
+        </Style>
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{StaticResource TextFg}"/>
+            <Setter Property="Background" Value="{StaticResource PanelBg}"/>
+        </Style>
+
         <Style TargetType="CheckBox">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Foreground" Value="{StaticResource TextFg}"/>

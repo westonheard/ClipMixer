@@ -7,21 +7,42 @@ using System.Linq;
 using System.Runtime.CompilerServices;
 
 namespace ClipMixer{
+    public enum ChannelMode{AsRecorded, MonoMix, LeftOnly, RightOnly}
+
     public static class Effects{
-        //filters go here, just number formatting for now
+        public static string channelFilter(ChannelMode mode) => mode switch{
+            ChannelMode.MonoMix => "pan=mono|c0=0.5*c0+0.5*c1",
+            ChannelMode.LeftOnly => "pan=mono|c0=c0",
+            ChannelMode.RightOnly => "pan=mono|c0=c1",
+            _ => "",
+        };
+
+        public static string channelName(ChannelMode mode) => mode switch{
+            ChannelMode.MonoMix => "Mono (left + right mixed)",
+            ChannelMode.LeftOnly => "Mono (left side only)",
+            ChannelMode.RightOnly => "Mono (right side only)",
+            _ => "Stereo (as recorded)",
+        };
+
         internal static string n(double v) => v.ToString("0.######", CultureInfo.InvariantCulture);
     }
 
-    public sealed record TrackPlan(int Index, string Label, double Volume, bool Keep, int Channels = 2){
-        public bool IsUntouched => Keep && Math.Abs(Volume - 1) < 1e-9;
+    public sealed record TrackPlan(int Index, string Label, double Volume, bool Keep, ChannelMode Channel,
+        int Channels = 2){
+        public bool IsUntouched => Keep && Math.Abs(Volume - 1) < 1e-9 && Channel == ChannelMode.AsRecorded;
 
         //mono goes to both sides at full level, aformat upmix made it 3db quieter
         //public string StereoFilter => "aformat=channel_layouts=stereo";
-        public string StereoFilter => Channels == 1
+        public string StereoFilter => Channel != ChannelMode.AsRecorded || Channels == 1
             ? "pan=stereo|c0=c0|c1=c0" : "aformat=channel_layouts=stereo";
 
         public List<string> filters(){
             List<string> f = new List<string>();
+            string ch = ClipMixer.Effects.channelFilter(Channel);
+            if(ch.Length > 0){
+                if(Channels > 2){f.Add("aformat=channel_layouts=stereo");}//pan only sees front l/r so fold 5.1 down first
+                f.Add(ch);
+            }
             if(Math.Abs(Volume - 1) > 1e-9){f.Add($"volume={ClipMixer.Effects.n(Volume)}");}
             return f;
         }
@@ -29,6 +50,7 @@ namespace ClipMixer{
         public string describe(){
             List<string> bits = new List<string>();
             if(Math.Abs(Volume - 1) > 1e-9){bits.Add($"{Volume * 100:0}%");}
+            if(Channel != ChannelMode.AsRecorded){bits.Add(ClipMixer.Effects.channelName(Channel));}
             return bits.Count == 0 ? "unchanged" : string.Join(", ", bits);
         }
     }
@@ -46,7 +68,7 @@ namespace ClipMixer{
 
         public static AudioPlan passthrough(int trackCount) => new(){
             Tracks = Enumerable.Range(0, trackCount)
-                .Select(i => new TrackPlan(i, $"Track {i + 1}", 1, true))
+                .Select(i => new TrackPlan(i, $"Track {i + 1}", 1, true, ChannelMode.AsRecorded))
                 .ToList(),
         };
 
@@ -124,6 +146,7 @@ namespace ClipMixer{
 
         private double volume = 1;
         private bool keep = true;
+        private ChannelMode channel = ChannelMode.AsRecorded;
 
         public TrackSettings(int index, string label, string info, int channels){
             Index = index;
@@ -138,6 +161,7 @@ namespace ClipMixer{
         public string Label { get; }
         public string Info { get; }
         public int Channels { get; }
+        public bool CanChooseChannels => Channels >= 2;
 
         public double Volume {
             get => volume;
@@ -156,10 +180,19 @@ namespace ClipMixer{
             set{if(set(ref keep, value)){notifyChanged();}}
         }
 
+        public ChannelMode Channel {
+            get => channel;
+            set{if(set(ref channel, value)){raise(nameof(ChannelText)); notifyChanged();}}
+        }
+
+        public string ChannelText => ClipMixer.Effects.channelName(channel) + "  \u25BE";
+
         public void notifyChanged() => Changed?.Invoke();
 
-        public bool IsDefault => Math.Abs(volume - 1) < 1e-9 && keep;
+        public bool IsDefault => Math.Abs(volume - 1) < 1e-9 && keep && channel == ChannelMode.AsRecorded;
 
-        public TrackPlan toPlan() => new(Index, Label, volume, keep, Channels);
+        public TrackPlan toPlan() => new(Index, Label, volume, keep,
+            CanChooseChannels ? channel : ChannelMode.AsRecorded,
+            Channels);
     }
 }
