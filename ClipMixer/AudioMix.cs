@@ -9,7 +9,7 @@ using System.Runtime.CompilerServices;
 namespace ClipMixer{
     //all effects are plain ffmpeg filters, mpv uses the same libavfilter so preview + export sound the same
 
-    public enum EffectKind{Overdrive, Bitcrusher, Waveshaper, Fuzz}
+    public enum EffectKind{Overdrive, Bitcrusher, Waveshaper, Fuzz, VoiceIsolation, NoiseGate}
 
     public enum ChannelMode{AsRecorded, MonoMix, LeftOnly, RightOnly}
 
@@ -48,6 +48,18 @@ namespace ClipMixer{
                 }),
             new EffectDef(EffectKind.Fuzz, "Fuzz", "Heavy, lopsided clipping.",
                 new[] { new ParamDef("gain", "Gain", 0, 1, 0.5, 0.01) }),
+            new EffectDef(EffectKind.VoiceIsolation, "Voice isolation", "Cuts rumble and hiss outside the voice range and reduces steady background noise.",
+                new[]{
+                    new ParamDef("strength", "Strength", 0, 1, 0.5, 0.01),
+                    new ParamDef("lowcut", "Low cut", 50, 1000, 120, 10, "Hz"),
+                    new ParamDef("highcut", "High cut", 2000, 12000, 7000, 100, "Hz"),
+                }),
+            new EffectDef(EffectKind.NoiseGate, "Noise gate", "Silences the track while it's quieter than the threshold (keyboard, breathing, fans).",
+                new[]{
+                    new ParamDef("threshold", "Threshold", -70, -10, -40, 1, "dB"),
+                    new ParamDef("attack", "Attack", 1, 100, 10, 1, "ms"),
+                    new ParamDef("release", "Release", 10, 1000, 150, 10, "ms"),
+                }),
         };
 
         public static EffectDef get(EffectKind kind) => All.First(d => d.Kind == kind);
@@ -94,6 +106,15 @@ namespace ClipMixer{
                     //dc shift makes the clip lopsided so top + bottom clip different, then shift it back. took way too long to get this shit to sound right
                     double g = 1 + P("gain") * 20;
                     return $"volume={n(g)},dcshift=shift=0.2,asoftclip=type=hard,dcshift=shift=-0.2,volume=0.833";
+                }
+                case EffectKind.VoiceIsolation:{
+                    double s = P("strength");
+                    double lo = P("lowcut"), hi = Math.Max(P("highcut"), lo + 500);
+                    return $"highpass=f={n(lo)},lowpass=f={n(hi)},afftdn=nr={n(6 + 34 * s)}:nf=-50:tn=1";
+                }
+                case EffectKind.NoiseGate:{
+                    double thr = Math.Pow(10, P("threshold") / 20);
+                    return $"agate=threshold={n(thr)}:ratio=10:range=0.001:attack={n(P("attack"))}:release={n(P("release"))}";
                 }
             }
             throw new ArgumentOutOfRangeException(nameof(kind));

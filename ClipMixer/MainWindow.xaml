@@ -256,7 +256,7 @@
                                                             Visibility="{Binding CanChooseChannels, Converter={StaticResource BoolToVis}}"
                                                             ToolTip="Stereo or mono. Mono also fixes a mic that only records on one side"/>
                                                     <Button Content="+ Effect" Click="addEffectClick" Padding="8,2" Margin="0,0,0,2"
-                                                            ToolTip="Add Overdrive, Bitcrusher, Waveshaper or Fuzz"/>
+                                                            ToolTip="Add Overdrive, Bitcrusher, Waveshaper, Fuzz, Voice isolation or Noise gate"/>
                                                 </WrapPanel>
                                                 <ItemsControl ItemsSource="{Binding Effects}" Visibility="{Binding HasEffects, Converter={StaticResource BoolToVis}}">
                                                     <ItemsControl.ItemsPanel>
