@@ -683,7 +683,7 @@ namespace ClipMixer{
             if(ReferenceEquals(sender, PreciseCheck)){updateCutInfo();}
         }
 
-        //-------- audio tracks (volume/channels) --------
+        //-------- audio tracks (volume/channels/effects, separate or mixed) --------
 
         private void setupAudio(MediaInfo info){
             List<StreamInfo> audio = info.Streams.Where(s => s.CodecType == "audio").ToList();
@@ -731,25 +731,25 @@ namespace ClipMixer{
             AudioPlanText.Foreground = (Brush)FindResource("TextFg");
             if(current == null || plan == null){
                 AudioPlanText.Text = "";
-                AudioHeaderText.Text = "Audio tracks";
+                AudioHeaderText.Text = "Audio tracks & effects";
                 return;
             }
             int n = plan.Tracks.Count;
             if(n == 0){
                 AudioPlanText.Text = "This clip has no audio.";
-                AudioHeaderText.Text = "Audio tracks (no audio in this clip)";
+                AudioHeaderText.Text = "Audio tracks & effects (no audio in this clip)";
                 return;
             }
 
             if(plan.IsPassthrough){
                 AudioPlanText.Text = n == 1 ? "Audio: copied as-is (lossless)." : $"Audio: all {n} tracks copied as-is (lossless).";
-                AudioHeaderText.Text = $"Audio tracks ({n} track{(n == 1 ? "" : "s")}, untouched)";
+                AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, untouched)";
             }else{
                 List<string> parts = new List<string> { "Audio: " + plan.describe() + "." };
                 if(plan.OutputTrackCount == 0){parts.Add("The trimmed clip will have NO audio.");}
                 if(plan.Tracks.Any(t => t.Keep && !t.IsUntouched)){parts.Add("Changed audio is re-encoded (AAC 256 kbps).");}
                 AudioPlanText.Text = string.Join(" ", parts);
-                AudioHeaderText.Text = $"Audio tracks ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
+                AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
                 if(plan.Tracks.Any(t => !t.Keep)){AudioPlanText.Foreground = (Brush)FindResource("WarnFg");}
             }
         }
@@ -771,6 +771,7 @@ namespace ClipMixer{
                     t.Volume = 1;
                     t.Keep = true;
                     t.Channel = ChannelMode.AsRecorded;
+                    t.Effects.Clear();
                 }
             }finally{suspendAudioEvents = false;}
             onAudioChanged();
@@ -797,6 +798,36 @@ namespace ClipMixer{
             menu.Opened += (_, __) => menuOpen++;
             menu.Closed += (_, __) => {menuOpen = Math.Max(0, menuOpen - 1); focusRoot();};
             menu.IsOpen = true;
+        }
+
+        private void addEffectClick(object sender, RoutedEventArgs e){
+            if(sender is not Button b || b.DataContext is not TrackSettings t){return;}
+            ContextMenu menu = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom };
+            foreach(EffectDef def in Effects.All){
+                MenuItem item = new MenuItem { Header = def.Name, ToolTip = def.Description };
+                EffectKind kind = def.Kind;
+                item.Click += (_, __) => t.addEffect(kind);
+                menu.Items.Add(item);
+            }
+            menu.Opened += (_, __) => menuOpen++;
+            menu.Closed += (_, __) => {menuOpen = Math.Max(0, menuOpen - 1); focusRoot();};
+            menu.IsOpen = true;
+        }
+
+        private void moveEffectLeftClick(object sender, RoutedEventArgs e){
+            if((sender as FrameworkElement)?.DataContext is EffectSettings fx){fx.Owner.moveEffect(fx, -1);}
+        }
+
+        private void moveEffectRightClick(object sender, RoutedEventArgs e){
+            if((sender as FrameworkElement)?.DataContext is EffectSettings fx){fx.Owner.moveEffect(fx, +1);}
+        }
+
+        private void removeEffectClick(object sender, RoutedEventArgs e){
+            if((sender as FrameworkElement)?.DataContext is EffectSettings fx){fx.Owner.Effects.Remove(fx);}
+        }
+
+        private void nextChoiceClick(object sender, RoutedEventArgs e){
+            if((sender as FrameworkElement)?.DataContext is EffectParam p){p.nextChoice();}
         }
 
         private void reapplyPreviewGraph(){

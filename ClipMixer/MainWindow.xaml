@@ -222,10 +222,10 @@
                 </Grid>
             </Border>
 
-            <!-- audio, per track volume + channels -->
+            <!-- audio, per track volume/channels/effects + separate or mixed -->
             <Expander x:Name="AudioExpander" Grid.Row="6" Margin="0,8,0,0" Expanded="audioExpanderChanged" Collapsed="audioExpanderChanged">
                 <Expander.Header>
-                    <TextBlock x:Name="AudioHeaderText" Text="Audio tracks" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="AudioHeaderText" Text="Audio tracks &amp; effects" FontWeight="SemiBold"/>
                 </Expander.Header>
                 <Border Style="{StaticResource Panel}" Margin="0,6,0,0">
                     <DockPanel>
@@ -233,7 +233,7 @@
                             <Button Click="resetAudioClick" Margin="0,0,6,4" Padding="8,3" ToolTip="Reset every track to untouched">Reset audio</Button>
                         </WrapPanel>
                         <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap" Margin="0,0,0,6"
-                                   Text="The player plays all kept tracks together."/>
+                                   Text="The player plays all kept tracks together. Effects run left to right."/>
                         <ScrollViewer MaxHeight="250" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <ItemsControl x:Name="TrackList">
                                 <ItemsControl.ItemTemplate>
@@ -255,7 +255,57 @@
                                                     <Button Content="{Binding ChannelText}" Click="channelClick" Padding="8,2" Margin="0,0,8,2"
                                                             Visibility="{Binding CanChooseChannels, Converter={StaticResource BoolToVis}}"
                                                             ToolTip="Stereo or mono. Mono also fixes a mic that only records on one side"/>
+                                                    <Button Content="+ Effect" Click="addEffectClick" Padding="8,2" Margin="0,0,0,2"
+                                                            ToolTip="Add Overdrive, Bitcrusher, Waveshaper or Fuzz"/>
                                                 </WrapPanel>
+                                                <ItemsControl ItemsSource="{Binding Effects}" Visibility="{Binding HasEffects, Converter={StaticResource BoolToVis}}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate DataType="{x:Type local:EffectSettings}">
+                                                            <Border BorderBrush="{StaticResource BorderBrushDim}" BorderThickness="1" CornerRadius="4"
+                                                                    Padding="6,4" Margin="0,6,6,0" Width="250" Background="{StaticResource PanelBg}">
+                                                                <StackPanel>
+                                                                    <DockPanel>
+                                                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                                                            <Button Content="&#x25C0;" Click="moveEffectLeftClick" Padding="5,0" FontSize="10" ToolTip="Move earlier"/>
+                                                                            <Button Content="&#x25B6;" Click="moveEffectRightClick" Padding="5,0" FontSize="10" Margin="2,0,0,0" ToolTip="Move later"/>
+                                                                            <Button Content="&#x2715;" Click="removeEffectClick" Padding="5,0" FontSize="10" Margin="2,0,0,0" ToolTip="Remove"/>
+                                                                        </StackPanel>
+                                                                        <CheckBox IsChecked="{Binding Enabled}" ToolTip="{Binding Description}">
+                                                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                                                        </CheckBox>
+                                                                    </DockPanel>
+                                                                    <ItemsControl ItemsSource="{Binding Params}" Margin="0,4,0,0">
+                                                                        <ItemsControl.ItemTemplate>
+                                                                            <DataTemplate DataType="{x:Type local:EffectParam}">
+                                                                                <Grid Margin="0,1">
+                                                                                    <Grid.ColumnDefinitions>
+                                                                                        <ColumnDefinition Width="70"/>
+                                                                                        <ColumnDefinition Width="*"/>
+                                                                                        <ColumnDefinition Width="62"/>
+                                                                                    </Grid.ColumnDefinitions>
+                                                                                    <TextBlock Text="{Binding Label}" FontSize="11" VerticalAlignment="Center"/>
+                                                                                    <Slider Grid.Column="1" Minimum="{Binding Min}" Maximum="{Binding Max}" SmallChange="{Binding Step}"
+                                                                                            IsSnapToTickEnabled="True" TickFrequency="{Binding Step}" Focusable="False" IsMoveToPointEnabled="True"
+                                                                                            Value="{Binding Value, Mode=TwoWay}" VerticalAlignment="Center"
+                                                                                            Visibility="{Binding IsSlider, Converter={StaticResource BoolToVis}}"/>
+                                                                                    <Button Grid.Column="1" Content="{Binding ValueText}" Click="nextChoiceClick" Padding="6,1"
+                                                                                            Visibility="{Binding IsChoice, Converter={StaticResource BoolToVis}}" ToolTip="Click to change"/>
+                                                                                    <TextBlock Grid.Column="2" Text="{Binding ValueText}" FontSize="11" VerticalAlignment="Center" Margin="6,0,0,0"
+                                                                                               Visibility="{Binding IsSlider, Converter={StaticResource BoolToVis}}"/>
+                                                                                </Grid>
+                                                                            </DataTemplate>
+                                                                        </ItemsControl.ItemTemplate>
+                                                                    </ItemsControl>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
                                             </StackPanel>
                                         </Border>
                                     </DataTemplate>
