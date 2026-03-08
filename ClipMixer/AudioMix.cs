@@ -179,11 +179,12 @@ namespace ClipMixer{
     }
 
     public sealed class AudioPlan{
+        public bool MixDown { get; init; }
         public IReadOnlyList<TrackPlan> Tracks { get; init; } = Array.Empty<TrackPlan>();
 
-        public bool IsPassthrough => Tracks.All(t => t.IsUntouched);
+        public bool IsPassthrough => !MixDown && Tracks.All(t => t.IsUntouched);
 
-        public int OutputTrackCount => Tracks.Count(t => t.Keep);
+        public int OutputTrackCount => MixDown ? (Tracks.Any(t => t.Keep) ? 1 : 0) : Tracks.Count(t => t.Keep);
 
         public static AudioPlan passthrough(int trackCount) => new(){
             Tracks = Enumerable.Range(0, trackCount)
@@ -193,6 +194,11 @@ namespace ClipMixer{
 
         public string describe(){
             if(Tracks.Count == 0){return "no audio";}
+            List<TrackPlan> kept = Tracks.Where(t => t.Keep).ToList();
+            if(MixDown){
+                return kept.Count == 0 ? "no audio (every track removed)"
+                    : "mixed into one track: " + string.Join(" + ", kept.Select(t => $"{t.Label} ({t.describe()})"));
+            }
             return string.Join("; ", Tracks.Select(t => t.Keep ? $"{t.Label}: {(t.IsUntouched ? "copied" : t.describe())}" : $"{t.Label}: REMOVED"));
         }
     }
@@ -216,14 +222,30 @@ namespace ClipMixer{
             List<OutputAudioTrack> outputs = new List<OutputAudioTrack>();
             List<TrackPlan> kept = plan.Tracks.Where(t => t.Keep).ToList();
 
-            foreach(TrackPlan t in kept){
-                if(t.IsUntouched){
-                    outputs.Add(new OutputAudioTrack(new[] { t.Index }, null));
-                    continue;
+            if(plan.MixDown){
+                if(kept.Count == 0){return (null, outputs);}
+                if(kept.Count == 1){
+                    TrackPlan t = kept[0];
+                    chains.Add(chain($"0:a:{t.Index}", "amixout", t.filters()
+                        .Append(t.StereoFilter)));
+                }else{
+                    foreach(TrackPlan t in kept){
+                        chains.Add(chain($"0:a:{t.Index}", $"m{t.Index}", t.filters().Append(t.StereoFilter)));
+                    }
+                    chains.Add(string.Concat(kept.Select(t => $"[m{t.Index}]")) +
+                               $"amix=inputs={kept.Count}:normalize=0:duration=longest,{MixLimiter}[amixout]");
                 }
-                string label = $"aout{t.Index}";
-                chains.Add(chain($"0:a:{t.Index}", label, t.filters()));
-                outputs.Add(new OutputAudioTrack(new[] { t.Index }, label));
+                outputs.Add(new OutputAudioTrack(kept.Select(t => t.Index).ToArray(), "amixout"));
+            }else{
+                foreach(TrackPlan t in kept){
+                    if(t.IsUntouched){
+                        outputs.Add(new OutputAudioTrack(new[] { t.Index }, null));
+                        continue;
+                    }
+                    string label = $"aout{t.Index}";
+                    chains.Add(chain($"0:a:{t.Index}", label, t.filters()));
+                    outputs.Add(new OutputAudioTrack(new[] { t.Index }, label));
+                }
             }
             return (chains.Count == 0 ? null : string.Join(";", chains), outputs);
         }
@@ -238,6 +260,7 @@ namespace ClipMixer{
             if(audible.Count == 1){
                 TrackPlan t = audible[0];
                 List<string> f = t.filters();
+                if(plan.MixDown){f.Add(t.StereoFilter);}
                 return chain($"aid{t.Index + 1}", "ao", f);
             }
 

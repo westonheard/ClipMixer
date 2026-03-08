@@ -262,7 +262,9 @@ namespace ClipMixer{
                 }
                 //mp4 "title" is what ffprobe/nvidia show as "name"
                 StreamInfo? first = srcAudio.ElementAtOrDefault(o.Sources[0]);
-                string? title = first?.DisplayName;
+                string? title = o.Sources.Length > 1
+                    ? "Mix: " + string.Join(" + ", o.Sources.Select(i => srcAudio.ElementAtOrDefault(i)?.DisplayName ?? $"Track {i + 1}"))
+                    : first?.DisplayName;
                 if(title != null){a.AddRange(new[] { $"-metadata:s:a:{k}", "title=" + title });}
                 if(first?.getTag("language") is {} lang){a.AddRange(new[] { $"-metadata:s:a:{k}", "language=" + lang });}
             }
@@ -337,7 +339,7 @@ namespace ClipMixer{
             }
             if(outV.Count > 0){passes.Add(("0:V", videoNeed, "video"));}
             for(int k = 0; k < outA.Count; k++){
-                double need = audioOut[k].Sources.Select(i => Coverage(srcA.ElementAtOrDefault(i))).DefaultIfEmpty(expected).Max();
+                double need = audioOut[k].Sources.Select(i => Coverage(srcA.ElementAtOrDefault(i))).DefaultIfEmpty(expected).Max();//mix has to last as long as its longest input
                 CheckStream(outA[k], need, $"Audio track {k + 1}");
                 passes.Add(($"0:a:{k}", need, $"audio track {k + 1}"));
             }

@@ -230,6 +230,13 @@
                 <Border Style="{StaticResource Panel}" Margin="0,6,0,0">
                     <DockPanel>
                         <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+                            <TextBlock Text="In the trimmed file:" VerticalAlignment="Center" Margin="0,0,8,4" FontWeight="SemiBold"/>
+                            <RadioButton x:Name="SeparateRadio" GroupName="AudioOut" IsChecked="True" Margin="0,0,12,4" Checked="audioOutputChanged"
+                                         Content="Keep tracks separate"
+                                         ToolTip="Kept tracks stay separate (e.g. game and mic). Unchanged tracks are copied losslessly."/>
+                            <RadioButton x:Name="MixDownRadio" GroupName="AudioOut" Margin="0,0,20,4" Checked="audioOutputChanged"
+                                         Content="Mix into one track"
+                                         ToolTip="Mix all kept tracks (with volume and effects) into one. Can't be undone once the original is replaced."/>
                             <Button Click="resetAudioClick" Margin="0,0,6,4" Padding="8,3" ToolTip="Reset every track to untouched">Reset audio</Button>
                         </WrapPanel>
                         <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap" Margin="0,0,0,6"

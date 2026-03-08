@@ -700,6 +700,7 @@ namespace ClipMixer{
                     t.Changed += onAudioChanged;
                     tracks.Add(t);
                 }
+                SeparateRadio.IsChecked = true;
             }finally{suspendAudioEvents = false;}
 
             updateAudioState();
@@ -713,7 +714,7 @@ namespace ClipMixer{
 
         private AudioPlan? currentPlan(){
             if(info == null || tracks.Count != info.AudioTrackCount){return null;}
-            return new AudioPlan { Tracks = tracks.Select(t => t.toPlan()).ToList() };
+            return new AudioPlan { MixDown = MixDownRadio.IsChecked == true, Tracks = tracks.Select(t => t.toPlan()).ToList() };
         }
 
         private bool AudioChanged => currentPlan() is { IsPassthrough: false };
@@ -746,11 +747,11 @@ namespace ClipMixer{
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, untouched)";
             }else{
                 List<string> parts = new List<string> { "Audio: " + plan.describe() + "." };
-                if(plan.OutputTrackCount == 0){parts.Add("The trimmed clip will have NO audio.");}
-                if(plan.Tracks.Any(t => t.Keep && !t.IsUntouched)){parts.Add("Changed audio is re-encoded (AAC 256 kbps).");}
+                if(plan.OutputTrackCount == 0){parts.Add("The trimmed clip will have NO audio.");}else if(plan.MixDown){parts.Add("Mixing can't be undone once the original is replaced.");}
+                if(plan.Tracks.Any(t => t.Keep && !t.IsUntouched) || plan.MixDown){parts.Add("Changed audio is re-encoded (AAC 256 kbps).");}
                 AudioPlanText.Text = string.Join(" ", parts);
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
-                if(plan.Tracks.Any(t => !t.Keep)){AudioPlanText.Foreground = (Brush)FindResource("WarnFg");}
+                if(plan.MixDown || plan.Tracks.Any(t => !t.Keep)){AudioPlanText.Foreground = (Brush)FindResource("WarnFg");}
             }
         }
 
@@ -759,6 +760,8 @@ namespace ClipMixer{
             if(plan == null){return null;}
             return AudioGraph.buildPreview(plan);
         }
+
+        private void audioOutputChanged(object sender, RoutedEventArgs e) => onAudioChanged();
 
         private void audioExpanderChanged(object sender, RoutedEventArgs e){
             if(IsLoaded){settings.AudioPanelOpen = AudioExpander.IsExpanded;}
@@ -773,6 +776,7 @@ namespace ClipMixer{
                     t.Channel = ChannelMode.AsRecorded;
                     t.Effects.Clear();
                 }
+                SeparateRadio.IsChecked = true;
             }finally{suspendAudioEvents = false;}
             onAudioChanged();
         }
