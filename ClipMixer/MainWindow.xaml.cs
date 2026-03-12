@@ -52,7 +52,11 @@ namespace ClipMixer{
         private readonly DispatcherTimer fxDebounce;
 
         private readonly ObservableCollection<TrackSettings> tracks = new();
+        private readonly List<WaveLane> lanes = new();
         private bool suspendAudioEvents;
+        private readonly List<(string Path, CancellationTokenSource Cts, Task Task)> waveJobs = new();
+        private readonly Dictionary<string, (long Size, DateTime Mtime, float[][] Peaks)> peakCache = new(StringComparer.OrdinalIgnoreCase);
+        private const int WaveBucketsPerSecond = 100;
         private int menuOpen;
 
         //mpv time updates get squashed into one ui update at a time
@@ -91,6 +95,8 @@ namespace ClipMixer{
             Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
             Mpv.GraphRejected += () => Dispatcher.BeginInvoke(() =>
                 status("The player couldn't apply the audio settings to this clip, so you're hearing it unprocessed."));
+            WaveView.SeekRequested += t => seekTo(t);
+            WaveView.BucketsPerSecond = WaveBucketsPerSecond;
 
             Loaded += onLoaded;
             Closing += onClosing;
@@ -262,6 +268,7 @@ namespace ClipMixer{
             if(Mpv.LoadedPath != null && !string.Equals(Mpv.LoadedPath, entry.FullPath, StringComparison.OrdinalIgnoreCase)){
                 _ = Mpv.stopAsync();
             }
+            _ = stopWaveformsAsync();
             clearAudio();
             TimeText.Text = "";
 
@@ -299,7 +306,10 @@ namespace ClipMixer{
                     : "Set In (I) and Out (O), then Enter to trim - or Del to delete, N to skip.");
             }
 
-            if(info != null){setupAudio(info);}
+            if(info != null){
+                setupAudio(info);
+                startWaveforms(entry.FullPath, info);
+            }
 
             appliedGraph = buildPreviewGraph();
             Mpv.load(entry.FullPath, appliedGraph, null, AutoPlayCheck.IsChecked != true);
@@ -324,6 +334,7 @@ namespace ClipMixer{
             updateMarkerTexts();
             updateTimelineVisuals();
             clearAudio();
+            await stopWaveformsAsync();
             await Mpv.stopAsync();
         }
 
@@ -574,7 +585,8 @@ namespace ClipMixer{
 
             bool deleted = false;
             try{
-                await Mpv.stopAsync();//player has to let go of the file first
+                await Mpv.stopAsync();//player + waveform reader have to let go of the file first
+                await stopWaveformsAsync(entry.FullPath);
                 await FileOps.deleteAsync(entry.FullPath, recycle);
                 deleted = true;
 
@@ -604,6 +616,7 @@ namespace ClipMixer{
                 if(string.Equals(Mpv.LoadedPath, path, StringComparison.OrdinalIgnoreCase)){
                     await Mpv.stopAsync();
                 }
+                await stopWaveformsAsync(path);
                 if(string.Equals(current?.FullPath, path, StringComparison.OrdinalIgnoreCase)){keyframeToken++;}
             }).Task.Unwrap();
         }
@@ -692,6 +705,7 @@ namespace ClipMixer{
             try{
                 foreach(TrackSettings t in tracks){t.Changed -= onAudioChanged;}
                 tracks.Clear();
+                lanes.Clear();
                 for(int i = 0; i < audio.Count; i++){
                     StreamInfo s = audio[i];
                     string label = $"{i + 1}. {s.DisplayName ?? $"Track {i + 1}"}";
@@ -699,16 +713,20 @@ namespace ClipMixer{
                     TrackSettings t = new TrackSettings(i, label, $"{s.CodecName?.ToUpperInvariant()} {chans}".Trim(), s.Channels);
                     t.Changed += onAudioChanged;
                     tracks.Add(t);
+                    lanes.Add(new WaveLane { Label = label });
                 }
                 SeparateRadio.IsChecked = true;
             }finally{suspendAudioEvents = false;}
 
+            WaveView.setLanes(lanes, audio.Count > 0 ? "Loading waveforms..." : null);
             updateAudioState();
         }
 
         private void clearAudio(){
             foreach(TrackSettings t in tracks){t.Changed -= onAudioChanged;}
             tracks.Clear();
+            lanes.Clear();
+            WaveView.setLanes(lanes);
             updateAudioState();
         }
 
@@ -728,6 +746,15 @@ namespace ClipMixer{
         }
 
         private void updateAudioState(){
+            for(int i = 0; i < lanes.Count && i < tracks.Count; i++){
+                TrackSettings t = tracks[i];
+                lanes[i].Gain = t.Volume;
+                lanes[i].Dimmed = !t.Keep;
+                lanes[i].Note = !t.Keep ? (MixDownRadio.IsChecked == true ? "left out of the mix" : "removed from the file")
+                    : t.IsDefault ? null : t.toPlan().describe();
+            }
+            WaveView.refresh();
+
             AudioPlan? plan = currentPlan();
             AudioPlanText.Foreground = (Brush)FindResource("TextFg");
             if(current == null || plan == null){
@@ -832,6 +859,59 @@ namespace ClipMixer{
 
         private void nextChoiceClick(object sender, RoutedEventArgs e){
             if((sender as FrameworkElement)?.DataContext is EffectParam p){p.nextChoice();}
+        }
+
+        //-------- waveforms --------
+
+        private void startWaveforms(string path, MediaInfo info){
+            int n = info.AudioTrackCount;
+            double dur = info.DurationSeconds;
+            if(n == 0 || dur <= 0){WaveView.setMessage(null); return;}
+
+            long size; DateTime mtime;
+            try{FileInfo fi = new FileInfo(path); size = fi.Length; mtime = fi.LastWriteTimeUtc;}catch{return;}
+            if(peakCache.TryGetValue(path, out (long Size, DateTime Mtime, float[][] Peaks) c) && c.Size == size && c.Mtime == mtime && c.Peaks.Length == n){
+                applyPeaks(c.Peaks);
+                return;
+            }
+
+            CancellationTokenSource cts = new CancellationTokenSource();
+            int token = loadToken;
+            Task task = Task.Run(async () => {
+                try{
+                    float[][] peaks = await runner.readAudioPeaksAsync(path, n, dur, WaveBucketsPerSecond, cts.Token);
+                    await Dispatcher.InvokeAsync(() => {
+                        cachePeaks(path, size, mtime, peaks);
+                        if(token == loadToken && !cts.IsCancellationRequested){applyPeaks(peaks);}
+                    });
+                }catch(OperationCanceledException){}catch(Exception ex){
+                    await Dispatcher.InvokeAsync(() => {
+                        if(token == loadToken && !cts.IsCancellationRequested){WaveView.setMessage("Waveform unavailable: " + ex.Message);}
+                    });
+                }
+            });
+            waveJobs.RemoveAll(j => j.Task.IsCompleted);
+            waveJobs.Add((path, cts, task));
+        }
+
+        private void applyPeaks(float[][] peaks){
+            for(int i = 0; i < lanes.Count && i < peaks.Length; i++){lanes[i].Peaks = peaks[i];}
+            WaveView.setMessage(null);
+            WaveView.refresh();
+        }
+
+        private void cachePeaks(string path, long size, DateTime mtime, float[][] peaks){
+            peakCache[path] = (size, mtime, peaks);
+        }
+
+        //stops the waveform readers (all, or just the one on path) and waits till ffmpeg exits so the file can be renamed/deleted
+        private async Task stopWaveformsAsync(string? path = null){
+            List<(string Path, CancellationTokenSource Cts, Task Task)> jobs = waveJobs.Where(j => path == null || string.Equals(j.Path, path, StringComparison.OrdinalIgnoreCase)).ToList();
+            foreach((string Path, CancellationTokenSource Cts, Task Task) j in jobs){j.Cts.Cancel();}
+            foreach((string Path, CancellationTokenSource Cts, Task Task) j in jobs){
+                try{await j.Task;}catch{}
+                waveJobs.Remove(j);
+            }
         }
 
         private void reapplyPreviewGraph(){
@@ -1012,6 +1092,8 @@ namespace ClipMixer{
             bool has = current != null && durationSec > 0;
             Visibility vis = has ? Visibility.Visible : Visibility.Hidden;
             TimelineSelection.Visibility = InThumb.Visibility = OutThumb.Visibility = PlayheadThumb.Visibility = vis;
+            WaveView.setTimes(has ? durationSec : 0, inSec, outSec,
+                has && KeyframeMarker.Visibility == Visibility.Visible && KeyframeMarker.Tag is double kf ? kf : null);
             if(!has){KeyframeMarker.Visibility = Visibility.Collapsed; return;}
 
             double xIn = xFromTime(inSec);
@@ -1037,6 +1119,7 @@ namespace ClipMixer{
         private void updatePlayheadVisual(){
             Canvas.SetLeft(PlayheadThumb, xFromTime(playSec) - PlayheadThumb.Width / 2.0);
             Canvas.SetTop(PlayheadThumb, 4);
+            WaveView.setPlayhead(playSec);
         }
 
         private void status(string msg) => StatusText.Text = msg;

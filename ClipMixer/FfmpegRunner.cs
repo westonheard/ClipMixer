@@ -219,6 +219,124 @@ namespace ClipMixer{
             };
         }
 
+        //peak 0..1 per slice for every audio track in one pass, lined up on the clip timeline (late mic gets silence in front)
+        public async Task<float[][]> readAudioPeaksAsync(string path, int trackCount, double duration, int bucketsPerSecond, CancellationToken ct){
+            if(trackCount <= 0 || duration <= 0){return Array.Empty<float[]>();}
+            //const int rate = 4000;
+            const int rate = 8000;
+            int perBucket = Math.Max(1, rate / bucketsPerSecond);
+            int buckets = (int)Math.Ceiling(duration * bucketsPerSecond) + 1;
+
+            StringBuilder graph = new StringBuilder();
+            for(int i = 0; i < trackCount; i++){
+                graph.Append($"[0:a:{i}]aresample={rate}:async=1:first_pts=0,aformat=sample_fmts=s16:channel_layouts=stereo,apad[w{i}];");
+            }
+            if(trackCount == 1){graph.Append("[w0]anull[wout]");}else{
+                for(int i = 0; i < trackCount; i++){graph.Append($"[w{i}]");}
+                graph.Append($"amerge=inputs={trackCount}[wout]");
+            }
+
+            List<string> args = new List<string>
+            {
+                "-hide_banner", "-nostdin", "-v", "error", "-vn", "-sn", "-dn", "-i", path,
+                "-filter_complex", graph.ToString(), "-map", "[wout]", "-t", sec(duration),
+                "-f", "s16le", "-c:a", "pcm_s16le", "pipe:1",
+            };
+
+            float[][] peaks = new float[trackCount][];
+            for(int i = 0; i < trackCount; i++){peaks[i] = new float[buckets];}
+            //every track is stereo (mono gets upmixed) so a mic thats only on one side still shows full level
+            long frame = 0;//sample frames so far (L+R per track)
+            int carry = 0;//leftover bytes from a partial frame
+            int frameBytes = trackCount * 4;
+            byte[] partial = new byte[frameBytes];
+
+            //reads dont line up w/ frames so partial ones get stitched together, idk why this was such a pain
+            void Consume(ReadOnlySpan<byte> data){
+                int pos = 0;
+                if(carry > 0){
+                    int need = frameBytes - carry;
+                    if(data.Length < need){data.CopyTo(partial.AsSpan(carry)); carry += data.Length; return;}
+                    data[..need].CopyTo(partial.AsSpan(carry));
+                    AddFrame(partial);
+                    pos = need;
+                    carry = 0;
+                }
+                while(data.Length - pos >= frameBytes){
+                    AddFrame(data.Slice(pos, frameBytes));
+                    pos += frameBytes;
+                }
+                if(pos < data.Length){data[pos..].CopyTo(partial); carry = data.Length - pos;}
+            }
+
+            void AddFrame(ReadOnlySpan<byte> f){
+                long b = frame++ / perBucket;
+                if(b >= buckets){return;}
+                for(int t = 0; t < trackCount; t++){
+                    int l = Math.Abs((int)(short)(f[4 * t] | (f[4 * t + 1] << 8)));
+                    int r = Math.Abs((int)(short)(f[4 * t + 2] | (f[4 * t + 3] << 8)));
+                    float a = Math.Max(l, r) / 32768f;
+                    if(a > peaks[t][b]){peaks[t][b] = a;}
+                }
+            }
+
+            ProcessResult res = await runRawAsync(FfmpegPath, args, Consume, ct).ConfigureAwait(false);
+            if(res.ExitCode != 0){
+                throw new Exception($"waveform decode failed (exit {res.ExitCode}): {firstLines(res.StdErr, 3)}");
+            }
+            return peaks;
+        }
+
+        //like runAsync but stdout comes back as raw bytes (for pcm)
+        public static async Task<ProcessResult> runRawAsync(string exe, IEnumerable<string> args, SpanAction onStdout, CancellationToken ct){
+            if(!File.Exists(exe)){
+                throw new FileNotFoundException($"{Path.GetFileName(exe)} not found. Expected at: {exe}", exe);
+            }
+
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true,
+                StandardErrorEncoding = new UTF8Encoding(false),
+            };
+            foreach(string a in args){psi.ArgumentList.Add(a);}
+
+            using Process p = new Process { StartInfo = psi };
+            StringBuilder stderr = new StringBuilder();
+            p.Start();
+
+            Task readErr = Task.Run(async () => {
+                string? line;
+                while((line = await p.StandardError.ReadLineAsync().ConfigureAwait(false)) != null){
+                    lock(stderr){stderr.AppendLine(line);}
+                }
+            });
+
+            //pipe reads dont always notice the token, killing the process forces EOF
+            using CancellationTokenRegistration reg = ct.Register(() => {try{if(!p.HasExited){p.Kill(entireProcessTree: true);}}catch{}});
+            try{
+                Stream stream = p.StandardOutput.BaseStream;
+                byte[] buf = new byte[64 * 1024];
+                int n;
+                while((n = await stream.ReadAsync(buf.AsMemory(), ct).ConfigureAwait(false)) > 0){
+                    onStdout(buf.AsSpan(0, n));
+                }
+                await p.WaitForExitAsync(ct).ConfigureAwait(false);
+            }catch(OperationCanceledException){
+                try{if(!p.HasExited){p.Kill(entireProcessTree: true);}}catch{}
+                try{await p.WaitForExitAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);}catch{}
+                throw;
+            }
+
+            await readErr.ConfigureAwait(false);
+            return new ProcessResult { ExitCode = p.ExitCode, StdErr = stderr.ToString() };
+        }
+
+        public delegate void SpanAction(ReadOnlySpan<byte> data);
+
         //seconds for ffmpeg args, always invariant culture
         public static string sec(double seconds) =>
             Math.Max(0, seconds).ToString("0.######", CultureInfo.InvariantCulture);
