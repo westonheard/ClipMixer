@@ -45,6 +45,7 @@ namespace ClipMixer{
         private bool deleting;
         private bool probeDone;//details for current are known (or failed)
         private bool suppressSelection;
+        private double previewStopAtSec = -1;
         private string? appliedGraph;
 
         private readonly DispatcherTimer keyframeDebounce;
@@ -262,6 +263,7 @@ namespace ClipMixer{
             durationSec = 0;
             inSec = outSec = playSec = 0;
             outUserSet = false;
+            previewStopAtSec = -1;
             probeDone = false;
 
             //dont keep showing the old clip under the new name while probing
@@ -373,6 +375,12 @@ namespace ClipMixer{
             playSec = Math.Clamp(t, 0, Math.Max(0.001, dur));
             TimeText.Text = $"{FfmpegRunner.formatTs(playSec)} / {FfmpegRunner.formatTs(durationSec)}";
             if(!draggingPlayhead){updatePlayheadVisual();}
+
+            if(previewStopAtSec >= 0 && playSec >= previewStopAtSec){
+                previewStopAtSec = -1;
+                Mpv.pause();
+                status("Preview done.");
+            }
         }
 
         private void onMpvDuration(double d){
@@ -397,6 +405,7 @@ namespace ClipMixer{
 
         private void togglePlay(){
             if(current == null){return;}
+            previewStopAtSec = -1;
             Mpv.togglePause();
         }
 
@@ -923,6 +932,24 @@ namespace ClipMixer{
             appliedGraph = graph;
             //changing the graph on a playing file glitches the video so just reload at the same spot
             Mpv.load(current.FullPath, graph, pos, Mpv.IsPaused);
+        }
+
+        private void previewFxClick(object sender, RoutedEventArgs e){
+            if(current == null || durationSec <= 0){status("No clip loaded."); return;}
+            fxDebounce.Stop();
+            double ps = Math.Clamp(playSec - 2.5, inSec, Math.Max(inSec, outSec - 5));
+            double pe = Math.Min(outSec, ps + 5);
+            string? graph = buildPreviewGraph();
+            previewStopAtSec = pe;
+            if(graph != appliedGraph){
+                //a seek sent right after a reload just gets lost (took way too long to figure out), so the reload starts at the preview point
+                appliedGraph = graph;
+                Mpv.load(current.FullPath, graph, ps, false);
+            }else{
+                Mpv.seek(ps);
+                Mpv.play();
+            }
+            status("Previewing 5s...");
         }
 
         private void saveSettings(){

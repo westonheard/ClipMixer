@@ -241,6 +241,7 @@
                                          Content="Mix into one track"
                                          ToolTip="Mix all kept tracks (with volume and effects) into one. Can't be undone once the original is replaced."/>
                             <Button Click="resetAudioClick" Margin="0,0,6,4" Padding="8,3" ToolTip="Reset every track to untouched">Reset audio</Button>
+                            <Button Click="previewFxClick" Margin="0,0,0,4" Padding="8,3" ToolTip="Play 5s around the playhead">Preview 5s</Button>
                         </WrapPanel>
                         <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap" Margin="0,0,0,6"
                                    Text="The player plays all kept tracks together. Effects run left to right."/>
