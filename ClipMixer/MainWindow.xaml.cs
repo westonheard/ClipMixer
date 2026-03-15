@@ -1053,6 +1053,7 @@ namespace ClipMixer{
             scanCts?.Cancel();
             shutdownCts.Cancel();
             saveSettings();
+            cache.save();
         }
 
         //-------- timeline --------
