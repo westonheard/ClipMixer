@@ -20,6 +20,7 @@ namespace ClipMixer{
         private readonly FfmpegRunner runner = FfmpegRunner.createDefault();
         private readonly ClipProcessor processor;
         private readonly AppSettings settings = AppSettings.load();
+        private readonly ClipCache cache = new(Path.Combine(AppSettings.DataDir, "clip-cache.json"));
 
         private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows
         private readonly List<ClipEntry> allClips = new();//every clip found, trimmed ones too
@@ -174,7 +175,7 @@ namespace ClipMixer{
             bool autoSelected = false;
 
             try{
-                ScanSummary summary = await ClipLibrary.scanAsync(folder, recurse, runner, active,
+                ScanSummary summary = await ClipLibrary.scanAsync(folder, recurse, runner, cache, active,
                     entry => Dispatcher.BeginInvoke(() => {
                         if(cts.IsCancellationRequested){return;}
                         addClip(entry);
@@ -599,6 +600,7 @@ namespace ClipMixer{
                 await FileOps.deleteAsync(entry.FullPath, recycle);
                 deleted = true;
 
+                cache.remove(entry.FullPath);
                 removeClip(entry.FullPath);
                 status($"Deleted {entry.FileName}{(recycle ? " (in the Recycle Bin)" : " permanently")}.");
             }catch(Exception ex){
@@ -640,6 +642,8 @@ namespace ClipMixer{
                             (stage, p) => Dispatcher.BeginInvoke(() => {if(!job.IsFinished){job.report(stage, p);}}),
                             shutdownCts.Token));
 
+                        cache.markTrimmed(src, result.OutputDurationSec);
+                        cache.save();
                         if(File.Exists(src) && !shutdownCts.IsCancellationRequested && belongsToOpenFolder(src)){
                             FileInfo fi = new FileInfo(src);
                             addClip(new ClipEntry

@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -76,7 +77,7 @@ namespace ClipMixer{
 
         //onClip fires from a worker thread per clip so the list fills in while its still scanning
         public static async Task<ScanSummary> scanAsync(
-            string folder, bool recurse, FfmpegRunner runner, ISet<string> activePaths,
+            string folder, bool recurse, FfmpegRunner runner, ClipCache cache, ISet<string> activePaths,
             Action<ClipEntry> onClip, Action<int, int>? onProgress, CancellationToken ct){
             ScanSummary summary = new ScanSummary();
 
@@ -97,16 +98,17 @@ namespace ClipMixer{
                 FileInfo fi = new FileInfo(path);
                 if(!fi.Exists){continue;}
 
-                bool trimmed;
-                double duration;
-                try{
-                    MediaInfo info = await runner.probeAsync(path, ct).ConfigureAwait(false);
-                    trimmed = ClipProcessor.isTrimTag(info.getTag("comment"));
-                    duration = info.DurationSeconds;
-                }catch(OperationCanceledException){throw;}catch{
-                    //broken file, still list it so it can be deleted
-                    trimmed = false;
-                    duration = 0;
+                if(!cache.tryGet(path, fi.Length, fi.LastWriteTimeUtc, out bool trimmed, out double duration)){
+                    try{
+                        MediaInfo info = await runner.probeAsync(path, ct).ConfigureAwait(false);
+                        trimmed = ClipProcessor.isTrimTag(info.getTag("comment"));
+                        duration = info.DurationSeconds;
+                        cache.set(path, fi.Length, fi.LastWriteTimeUtc, trimmed, duration);
+                    }catch(OperationCanceledException){throw;}catch{
+                        //broken file, still list it so it can be deleted, but dont cache it
+                        trimmed = false;
+                        duration = 0;
+                    }
                 }
 
                 if(trimmed){summary.AlreadyTrimmed++;}else{summary.Untrimmed++;}
@@ -121,7 +123,75 @@ namespace ClipMixer{
                 onProgress?.Invoke(++done, candidates.Count);
             }
 
+            cache.save();
             return summary;
+        }
+    }
+
+    //remembers checked files (path + size + mtime) so rescans are instant, trimmed tag is in the file itself anyway
+    public sealed class ClipCache{
+        private sealed class Entry{
+            public long Size { get; set; }
+            public long MtimeTicks { get; set; }
+            public bool Trimmed { get; set; }
+            public double Duration { get; set; }
+        }
+
+        private readonly string file;
+        private readonly object lock_ = new();
+        private Dictionary<string, Entry> entries = new(StringComparer.OrdinalIgnoreCase);
+
+        public ClipCache(string file){
+            this.file = file;
+            try{
+                if(File.Exists(file)){
+                    entries = JsonSerializer.Deserialize<Dictionary<string, Entry>>(File.ReadAllText(file))
+                               is {} d ? new Dictionary<string, Entry>(d, StringComparer.OrdinalIgnoreCase) : entries;
+                }
+            }catch{}//corrupt cache, start fresh
+        }
+
+        public bool tryGet(string path, long size, DateTime mtimeUtc, out bool trimmed, out double duration){
+            lock(lock_){
+                //old versions didnt store length (0), treat as unknown so it gets rechecked once
+                if(entries.TryGetValue(path, out Entry? e) && e.Size == size && e.MtimeTicks == mtimeUtc.Ticks && e.Duration > 0){
+                    trimmed = e.Trimmed;
+                    duration = e.Duration;
+                    return true;
+                }
+            }
+            trimmed = false;
+            duration = 0;
+            return false;
+        }
+
+        public void set(string path, long size, DateTime mtimeUtc, bool trimmed, double duration){
+            lock(lock_){entries[path] = new Entry { Size = size, MtimeTicks = mtimeUtc.Ticks, Trimmed = trimmed, Duration = duration };}
+        }
+
+        public void markTrimmed(string path, double duration){
+            try{
+                FileInfo fi = new FileInfo(path);
+                if(fi.Exists){set(path, fi.Length, fi.LastWriteTimeUtc, true, duration);}
+            }catch{}
+        }
+
+        public void remove(string path){
+            lock(lock_){entries.Remove(path);}
+        }
+
+        public void save(){
+            try{
+                string json;
+                lock(lock_){
+                    foreach(string k in entries.Keys.Where(k => !File.Exists(k)).ToList()){entries.Remove(k);}
+                    json = JsonSerializer.Serialize(entries);
+                }
+                Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                string tmp = file + ".tmp";
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, file, overwrite: true);
+            }catch{}//its just a cache, whatever
         }
     }
 }
