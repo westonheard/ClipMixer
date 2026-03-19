@@ -11,6 +11,7 @@ namespace ClipMixer{
         public bool ConfirmDelete { get; set; } = true;
         public bool AutoPlay { get; set; } = true;
         public bool AudioPanelOpen { get; set; } = true;
+        public ClipSortMode SortMode { get; set; } = ClipSortMode.Name;
 
         //localappdata\ClipMixer unless CLIPMIXER_DATA env var is set
         public static string DataDir =>

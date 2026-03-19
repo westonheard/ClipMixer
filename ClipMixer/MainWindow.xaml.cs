@@ -22,7 +22,7 @@ namespace ClipMixer{
         private readonly AppSettings settings = AppSettings.load();
         private readonly ClipCache cache = new(Path.Combine(AppSettings.DataDir, "clip-cache.json"));
 
-        private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows
+        private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows (sorted)
         private readonly List<ClipEntry> allClips = new();//every clip found, trimmed ones too
         private int oldNamedExports;//"_trimmed" files from the old app, never listed
         private string? folder;
@@ -74,6 +74,7 @@ namespace ClipMixer{
             AudioExpander.IsExpanded = settings.AudioPanelOpen;
 
             SubfoldersCheck.IsChecked = settings.IncludeSubfolders;
+            SortButton.Content = "Sort: " + ClipSort.label(settings.SortMode) + "  \u25BE";
             PreciseCheck.IsChecked = settings.PreciseCut;
             RecycleCheck.IsChecked = settings.UseRecycleBin;
             ConfirmDeleteCheck.IsChecked = settings.ConfirmDelete;
@@ -180,10 +181,10 @@ namespace ClipMixer{
                         if(cts.IsCancellationRequested){return;}
                         addClip(entry);
                         updateCounts();
-                        //open the first clip (or the requested one) asap
+                        //open the first clip (or the requested one) asap, if not sorting by name we dont know which is first till the scan ends
                         bool requested = selectPath != null && string.Equals(entry.FullPath, selectPath, StringComparison.OrdinalIgnoreCase);
                         if(!autoSelected && current == null && (requested ||
-                            (selectPath == null && !entry.IsTrimmed))){
+                            (selectPath == null && !entry.IsTrimmed && settings.SortMode == ClipSortMode.Name))){
                             autoSelected = true;
                             selectClip(entry);
                         }
@@ -220,8 +221,9 @@ namespace ClipMixer{
             removeClip(entry.FullPath);
             allClips.Add(entry);
             if(entry.IsTrimmed){return;}
+            IComparer<ClipEntry> cmp = ClipSort.comparer(settings.SortMode);
             int i = 0;
-            while(i < clips.Count && string.Compare(clips[i].RelativePath, entry.RelativePath, StringComparison.OrdinalIgnoreCase) <= 0){i++;}
+            while(i < clips.Count && cmp.Compare(clips[i], entry) <= 0){i++;}
             clips.Insert(i, entry);
         }
 
@@ -230,6 +232,38 @@ namespace ClipMixer{
             foreach(ClipEntry c in clips.Where(c => string.Equals(c.FullPath, path, StringComparison.OrdinalIgnoreCase)).ToList()){
                 clips.Remove(c);
             }
+        }
+
+        private void rebuildClipList(){
+            IComparer<ClipEntry> cmp = ClipSort.comparer(settings.SortMode);
+            suppressSelection = true;
+            try{
+                clips.Clear();
+                foreach(ClipEntry c in allClips.Where(c => !c.IsTrimmed).OrderBy(c => c, cmp)){clips.Add(c);}
+                if(current != null && clips.Contains(current)){
+                    ClipList.SelectedItem = current;
+                    ClipList.ScrollIntoView(current);
+                }
+            }finally{suppressSelection = false;}
+            updateCounts();
+        }
+
+        private void sortClick(object sender, RoutedEventArgs e){
+            if(sender is not Button b){return;}
+            ContextMenu menu = new ContextMenu { PlacementTarget = b, Placement = PlacementMode.Bottom };
+            foreach(ClipSortMode mode in Enum.GetValues<ClipSortMode>()){
+                MenuItem item = new MenuItem { Header = ClipSort.label(mode), IsCheckable = true, IsChecked = mode == settings.SortMode };
+                item.Click += (_, __) => {
+                    settings.SortMode = mode;
+                    b.Content = "Sort: " + ClipSort.label(mode) + "  \u25BE";
+                    settings.save();
+                    rebuildClipList();
+                };
+                menu.Items.Add(item);
+            }
+            menu.Opened += (_, __) => menuOpen++;
+            menu.Closed += (_, __) => {menuOpen = Math.Max(0, menuOpen - 1); focusRoot();};
+            menu.IsOpen = true;
         }
 
         private void updateCounts(){

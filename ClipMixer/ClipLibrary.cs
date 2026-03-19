@@ -48,6 +48,34 @@ namespace ClipMixer{
         public int AlreadyTrimmed;
     }
 
+    public enum ClipSortMode{Name, Newest, Oldest, Longest, Shortest, Largest}
+
+    public static class ClipSort{
+        public static string label(ClipSortMode m) => m switch{
+            ClipSortMode.Newest => "Newest first",
+            ClipSortMode.Oldest => "Oldest first",
+            ClipSortMode.Longest => "Longest first",
+            ClipSortMode.Shortest => "Shortest first",
+            ClipSortMode.Largest => "Biggest file first",
+            _ => "Name (A-Z)",
+        };
+
+        //unknown lengths always go at the bottom, doesnt matter which way ur sorting
+        private static int unknownLast(ClipEntry a, ClipEntry b) => (a.DurationSeconds <= 0).CompareTo(b.DurationSeconds <= 0);
+
+        public static IComparer<ClipEntry> comparer(ClipSortMode m) => Comparer<ClipEntry>.Create((a, b) => {
+            int c = m switch{
+                ClipSortMode.Newest => b.ModifiedUtc.CompareTo(a.ModifiedUtc),
+                ClipSortMode.Oldest => a.ModifiedUtc.CompareTo(b.ModifiedUtc),
+                ClipSortMode.Longest => unknownLast(a, b) != 0 ? unknownLast(a, b) : b.DurationSeconds.CompareTo(a.DurationSeconds),
+                ClipSortMode.Shortest => unknownLast(a, b) != 0 ? unknownLast(a, b) : a.DurationSeconds.CompareTo(b.DurationSeconds),
+                ClipSortMode.Largest => b.SizeBytes.CompareTo(a.SizeBytes),
+                _ => 0,
+            };
+            return c != 0 ? c : string.Compare(a.RelativePath, b.RelativePath, StringComparison.OrdinalIgnoreCase);
+        });
+    }
+
     public static class ClipLibrary{
         //todo: maybe add .avi/.webm too, havent tested those w/ the trim stuff
         public static readonly HashSet<string> VideoExtensions =
