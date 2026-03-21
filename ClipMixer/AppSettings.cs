@@ -12,6 +12,7 @@ namespace ClipMixer{
         public bool AutoPlay { get; set; } = true;
         public bool AudioPanelOpen { get; set; } = true;
         public ClipSortMode SortMode { get; set; } = ClipSortMode.Name;
+        public bool ShowTrimmed { get; set; }
 
         //localappdata\ClipMixer unless CLIPMIXER_DATA env var is set
         public static string DataDir =>

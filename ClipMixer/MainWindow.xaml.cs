@@ -22,7 +22,7 @@ namespace ClipMixer{
         private readonly AppSettings settings = AppSettings.load();
         private readonly ClipCache cache = new(Path.Combine(AppSettings.DataDir, "clip-cache.json"));
 
-        private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows (sorted)
+        private readonly ObservableCollection<ClipEntry> clips = new();//what the list shows (sorted + filtered)
         private readonly List<ClipEntry> allClips = new();//every clip found, trimmed ones too
         private int oldNamedExports;//"_trimmed" files from the old app, never listed
         private string? folder;
@@ -74,6 +74,7 @@ namespace ClipMixer{
             AudioExpander.IsExpanded = settings.AudioPanelOpen;
 
             SubfoldersCheck.IsChecked = settings.IncludeSubfolders;
+            ShowTrimmedCheck.IsChecked = settings.ShowTrimmed;
             SortButton.Content = "Sort: " + ClipSort.label(settings.SortMode) + "  \u25BE";
             PreciseCheck.IsChecked = settings.PreciseCut;
             RecycleCheck.IsChecked = settings.UseRecycleBin;
@@ -220,7 +221,7 @@ namespace ClipMixer{
         private void addClip(ClipEntry entry){
             removeClip(entry.FullPath);
             allClips.Add(entry);
-            if(entry.IsTrimmed){return;}
+            if(entry.IsTrimmed && ShowTrimmedCheck.IsChecked != true){return;}
             IComparer<ClipEntry> cmp = ClipSort.comparer(settings.SortMode);
             int i = 0;
             while(i < clips.Count && cmp.Compare(clips[i], entry) <= 0){i++;}
@@ -236,10 +237,11 @@ namespace ClipMixer{
 
         private void rebuildClipList(){
             IComparer<ClipEntry> cmp = ClipSort.comparer(settings.SortMode);
+            bool showTrimmed = ShowTrimmedCheck.IsChecked == true;
             suppressSelection = true;
             try{
                 clips.Clear();
-                foreach(ClipEntry c in allClips.Where(c => !c.IsTrimmed).OrderBy(c => c, cmp)){clips.Add(c);}
+                foreach(ClipEntry c in allClips.Where(c => showTrimmed || !c.IsTrimmed).OrderBy(c => c, cmp)){clips.Add(c);}
                 if(current != null && clips.Contains(current)){
                     ClipList.SelectedItem = current;
                     ClipList.ScrollIntoView(current);
@@ -266,13 +268,20 @@ namespace ClipMixer{
             menu.IsOpen = true;
         }
 
+        private void showTrimmedChanged(object sender, RoutedEventArgs e){
+            if(!IsLoaded){return;}
+            settings.ShowTrimmed = ShowTrimmedCheck.IsChecked == true;
+            settings.save();
+            rebuildClipList();
+        }
+
         private void updateCounts(){
             int pending = jobs.Count(j => !j.IsFinished);
             int toReview = allClips.Count(c => !c.IsTrimmed);
             int trimmed = allClips.Count(c => c.IsTrimmed) + oldNamedExports;
             List<string> parts = new List<string> { toReview == 1 ? "1 clip to review" : $"{toReview} clips to review" };
             if(pending > 0){parts.Add($"{pending} processing");}
-            if(trimmed > 0){parts.Add($"{trimmed} already trimmed");}
+            if(trimmed > 0){parts.Add($"{trimmed} already trimmed{(ShowTrimmedCheck.IsChecked == true ? "" : " (hidden)")}");}
             ScanText.Text = folder == null ? "" : string.Join("  -  ", parts);
         }
 
@@ -678,6 +687,7 @@ namespace ClipMixer{
 
                         cache.markTrimmed(src, result.OutputDurationSec);
                         cache.save();
+                        //stays in the list (marked) if "show trimmed clips" is on
                         if(File.Exists(src) && !shutdownCts.IsCancellationRequested && belongsToOpenFolder(src)){
                             FileInfo fi = new FileInfo(src);
                             addClip(new ClipEntry

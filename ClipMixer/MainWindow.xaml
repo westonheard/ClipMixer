@@ -77,6 +77,9 @@
                               Checked="subfoldersChanged" Unchecked="subfoldersChanged"/>
                     <WrapPanel Margin="0,6,0,0">
                         <Button x:Name="SortButton" Click="sortClick" Padding="8,3" Margin="0,0,10,0" ToolTip="Sort clips (remembered)">Sort: Name (A-Z)</Button>
+                        <CheckBox x:Name="ShowTrimmedCheck" Content="Show trimmed clips" VerticalAlignment="Center"
+                                  Checked="showTrimmedChanged" Unchecked="showTrimmedChanged"
+                                  ToolTip="Also list clips you've already trimmed (marked with a check). Works across sessions since trimmed files carry a marker."/>
                     </WrapPanel>
                     <TextBlock x:Name="ScanText" Margin="0,6,0,6" FontWeight="SemiBold" TextWrapping="Wrap"/>
                 </StackPanel>
@@ -89,6 +92,8 @@
                         <DataTemplate DataType="{x:Type local:ClipEntry}">
                             <StackPanel x:Name="Item" Margin="2,3">
                                 <DockPanel>
+                                    <TextBlock x:Name="TrimBadge" DockPanel.Dock="Right" Text="&#x2713; Trimmed" Foreground="{StaticResource OkFg}" FontSize="11"
+                                               Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding IsTrimmed, Converter={StaticResource BoolToVis}}"/>
                                     <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                                 </DockPanel>
                                 <TextBlock Foreground="{StaticResource DimFg}" FontSize="11" TextTrimming="CharacterEllipsis">
@@ -97,6 +102,11 @@
                                 <TextBlock Text="{Binding Note}" Foreground="{StaticResource WarnFg}" FontSize="11" TextWrapping="Wrap"
                                            Visibility="{Binding HasNote, Converter={StaticResource BoolToVis}}"/>
                             </StackPanel>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding IsTrimmed}" Value="True">
+                                    <Setter TargetName="Item" Property="Opacity" Value="0.65"/>
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
                         </DataTemplate>
                     </ListBox.ItemTemplate>
                 </ListBox>
