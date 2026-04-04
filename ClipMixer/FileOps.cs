@@ -21,6 +21,11 @@ namespace ClipMixer{
         public static async Task deleteAsync(string path, bool useRecycleBin, CancellationToken ct = default){
             if(!File.Exists(path)){return;}
 
+            //shell just silently deletes for real on network/removable drives, so refuse and let the caller deal w/ it
+            if(useRecycleBin && !canRecycle(path)){
+                throw new NoRecycleBinException(path);
+            }
+
             if(!useRecycleBin){
                 await retryAsync(() => {
                     if(!File.Exists(path)){return;}
@@ -42,6 +47,16 @@ namespace ClipMixer{
                 await Task.Delay(250, ct).ConfigureAwait(false);
             }
             throw new IOException($"Could not move to Recycle Bin: {Path.GetFileName(path)} ({last?.Message})", last);
+        }
+
+        //only local fixed drives have a recycle bin
+        public static bool canRecycle(string path){
+            try{
+                string full = Path.GetFullPath(path);
+                if(full.StartsWith(@"\\", StringComparison.Ordinal)){return false;}
+                string? root = Path.GetPathRoot(full);
+                return root != null && GetDriveType(root) == DRIVE_FIXED;
+            }catch{return false;}
         }
 
         //force the export onto disk before the original gets removed, so a power cut cant lose both
@@ -109,5 +124,15 @@ namespace ClipMixer{
 
         [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
         private static extern int SHFileOperation(ref SHFILEOPSTRUCT lpFileOp);
+
+        private const uint DRIVE_FIXED = 3;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetDriveTypeW")]
+        private static extern uint GetDriveType(string lpRootPathName);
+    }
+
+    public sealed class NoRecycleBinException : IOException{
+        public NoRecycleBinException(string path)
+            : base($"This location has no Recycle Bin (network or removable drive): {Path.GetPathRoot(Path.GetFullPath(path))}"){}
     }
 }

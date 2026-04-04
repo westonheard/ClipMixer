@@ -188,8 +188,15 @@ namespace ClipMixer{
 
                 progress?.Invoke("Removing original", 0);
                 try{
-                    await FileOps.deleteAsync(backup, req.UseRecycleBin, CancellationToken.None).ConfigureAwait(false);
-                    Log(req.UseRecycleBin ? "Original sent to Recycle Bin." : "Original deleted.");
+                    try{
+                        await FileOps.deleteAsync(backup, req.UseRecycleBin, CancellationToken.None).ConfigureAwait(false);
+                        Log(req.UseRecycleBin ? "Original sent to Recycle Bin." : "Original deleted.");
+                    }catch(NoRecycleBinException){
+                        //trimmed file is verified + in place and they asked for a replace, so just delete it
+                        await FileOps.deleteAsync(backup, false, CancellationToken.None).ConfigureAwait(false);
+                        warnings.Add("This drive has no Recycle Bin, so the original was deleted permanently.");
+                        Log("No Recycle Bin on this drive; original deleted permanently.");
+                    }
                 }catch(Exception ex){
                     warnings.Add($"Trim succeeded but the original couldn't be removed; it's still at {backup} ({ex.Message})");
                     Log("Backup removal failed: " + ex.Message);

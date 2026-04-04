@@ -615,8 +615,12 @@ namespace ClipMixer{
             if(!probeDone){status("Still loading this clip - try again in a moment."); return;}
 
             bool recycle = RecycleCheck.IsChecked == true;
-            if(ConfirmDeleteCheck.IsChecked == true){
-                string how = recycle ? "It will be moved to the Recycle Bin." : "It will be PERMANENTLY deleted.";
+            bool canRecycle = recycle && FileOps.canRecycle(entry.FullPath);
+            //no recycle bin (network/removable drive) so always ask, even w/ confirm off
+            if(ConfirmDeleteCheck.IsChecked == true || (recycle && !canRecycle)){
+                string how = canRecycle ? "It will be moved to the Recycle Bin."
+                    : recycle ? "This drive has no Recycle Bin, so it will be PERMANENTLY deleted."
+                    : "It will be PERMANENTLY deleted.";
                 MessageBoxResult r = MessageBox.Show(this, $"Delete this clip?\n\n{entry.FileName}\n\n{how}",
                     "Delete clip", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
                 if(r != MessageBoxResult.Yes){return;}
@@ -640,12 +644,12 @@ namespace ClipMixer{
             try{
                 await Mpv.stopAsync();//player + waveform reader have to let go of the file first
                 await stopWaveformsAsync(entry.FullPath);
-                await FileOps.deleteAsync(entry.FullPath, recycle);
+                await FileOps.deleteAsync(entry.FullPath, canRecycle);
                 deleted = true;
 
                 cache.remove(entry.FullPath);
                 removeClip(entry.FullPath);
-                status($"Deleted {entry.FileName}{(recycle ? " (in the Recycle Bin)" : " permanently")}.");
+                status($"Deleted {entry.FileName}{(canRecycle ? " (in the Recycle Bin)" : " permanently")}.");
             }catch(Exception ex){
                 status($"Couldn't delete {entry.FileName}: {ex.Message}");
             }finally{
