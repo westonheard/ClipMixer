@@ -1109,7 +1109,7 @@ namespace ClipMixer{
         private const double TimelinePad = 14;
         private const double TrackTop = 30;
 
-        private double DurationSeconds => durationSec;
+        private double DurationSeconds => Math.Max(0.001, durationSec);
         private double TrackLeft => TimelinePad;
         private double TrackRight => Math.Max(TrackLeft + 1, Timeline.ActualWidth - TimelinePad);
         private double TrackWidth => TrackRight - TrackLeft;
