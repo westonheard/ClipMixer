@@ -9,7 +9,7 @@ using System.Runtime.CompilerServices;
 namespace ClipMixer{
     //all effects are plain ffmpeg filters, mpv uses the same libavfilter so preview + export sound the same
 
-    public enum EffectKind{Overdrive, Bitcrusher, Waveshaper, Fuzz, VoiceIsolation, NoiseGate}
+    public enum EffectKind{Overdrive, Bitcrusher, Waveshaper, Fuzz, VoiceIsolation, NoiseGate, Compressor}
 
     public enum ChannelMode{AsRecorded, MonoMix, LeftOnly, RightOnly}
 
@@ -59,6 +59,14 @@ namespace ClipMixer{
                     new ParamDef("threshold", "Threshold", -70, -10, -40, 1, "dB"),
                     new ParamDef("attack", "Attack", 1, 100, 10, 1, "ms"),
                     new ParamDef("release", "Release", 10, 1000, 150, 10, "ms"),
+                }),
+            new EffectDef(EffectKind.Compressor, "Compressor", "Evens out the volume: turns down loud parts (shouting, explosions) above the threshold, then Make-up raises the whole track.",
+                new[]{
+                    new ParamDef("threshold", "Threshold", -60, 0, -24, 1, "dB"),
+                    new ParamDef("ratio", "Ratio", 1, 20, 4, 0.5, ":1"),
+                    new ParamDef("attack", "Attack", 1, 200, 10, 1, "ms"),
+                    new ParamDef("release", "Release", 10, 1000, 200, 10, "ms"),
+                    new ParamDef("makeup", "Make-up", 0, 24, 6, 0.5, "dB"),
                 }),
         };
 
@@ -111,6 +119,11 @@ namespace ClipMixer{
                     double s = P("strength");
                     double lo = P("lowcut"), hi = Math.Max(P("highcut"), lo + 500);
                     return $"highpass=f={n(lo)},lowpass=f={n(hi)},afftdn=nr={n(6 + 34 * s)}:nf=-50:tn=1";
+                }
+                case EffectKind.Compressor:{
+                    double thr = Math.Clamp(Math.Pow(10, P("threshold") / 20), 0.000976563, 1);
+                    double makeup = Math.Clamp(Math.Pow(10, P("makeup") / 20), 1, 64);
+                    return $"acompressor=threshold={n(thr)}:ratio={n(P("ratio"))}:attack={n(P("attack"))}:release={n(P("release"))}:makeup={n(makeup)}";
                 }
                 case EffectKind.NoiseGate:{
                     double thr = Math.Pow(10, P("threshold") / 20);
