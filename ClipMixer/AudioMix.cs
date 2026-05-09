@@ -421,5 +421,17 @@ namespace ClipMixer{
             CanChooseChannels ? channel : ChannelMode.AsRecorded,
             Effects.Where(e => e.Enabled).Select(e => e.toPlan()).ToList(),
             Channels);
+
+        //copy settings from another track (for the next clip)
+        public void copyFrom(TrackSettings other){
+            Volume = other.Volume;
+            Keep = other.Keep;
+            if(CanChooseChannels){Channel = other.Channel;}
+            Effects.Clear();
+            foreach(EffectSettings fx in other.Effects){
+                EffectSettings copy = new EffectSettings(this, fx.Kind, fx.Params.ToDictionary(p => p.Def.Key, p => p.Value)) { Enabled = fx.Enabled };
+                Effects.Add(copy);
+            }
+        }
     }
 }

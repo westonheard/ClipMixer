@@ -56,6 +56,9 @@ namespace ClipMixer{
         private readonly ObservableCollection<TrackSettings> tracks = new();
         private readonly List<WaveLane> lanes = new();
         private bool suspendAudioEvents;
+        private List<TrackSettings>? carryOver;//settings reused on the next clip ("use for next clips")
+        private bool carryApplied;
+        private bool audioEdited;
         private readonly List<(string Path, CancellationTokenSource Cts, Task Task)> waveJobs = new();
         private readonly Dictionary<string, (long Size, DateTime Mtime, float[][] Peaks)> peakCache = new(StringComparer.OrdinalIgnoreCase);
         private const int WaveBucketsPerSecond = 100;
@@ -761,6 +764,12 @@ namespace ClipMixer{
 
         private void setupAudio(MediaInfo info){
             List<StreamInfo> audio = info.Streams.Where(s => s.CodecType == "audio").ToList();
+            bool keep = KeepAudioCheck.IsChecked == true;
+            //saved settings stick around till a clip w/ the same track layout uses them, so one odd clip (mic off = 1 track) doesnt wipe them
+            List<TrackSettings>? prev = keep ? carryOver : null;
+            bool apply = prev != null && prev.Count == audio.Count;
+            carryApplied = apply;
+            audioEdited = false;
 
             suspendAudioEvents = true;
             try{
@@ -772,18 +781,27 @@ namespace ClipMixer{
                     string label = $"{i + 1}. {s.DisplayName ?? $"Track {i + 1}"}";
                     string chans = s.Channels switch {1 => "mono", 2 => "stereo", > 2 => $"{s.Channels} ch", _ => ""};
                     TrackSettings t = new TrackSettings(i, label, $"{s.CodecName?.ToUpperInvariant()} {chans}".Trim(), s.Channels);
+                    if(apply){t.copyFrom(prev![i]);}
                     t.Changed += onAudioChanged;
                     tracks.Add(t);
                     lanes.Add(new WaveLane { Label = label });
                 }
-                SeparateRadio.IsChecked = true;
+                if(!apply){SeparateRadio.IsChecked = true;}
             }finally{suspendAudioEvents = false;}
+
+            if(prev != null && !apply){
+                status($"Your carried-over audio settings are for clips with {prev.Count} audio track(s); this one has {audio.Count}, so it starts untouched. " +
+                       "They'll be used again on the next matching clip.");
+            }
 
             WaveView.setLanes(lanes, audio.Count > 0 ? "Loading waveforms..." : null);
             updateAudioState();
         }
 
         private void clearAudio(){
+            //only remember this clips settings if it used the carried ones or the user set something up here
+            if(KeepAudioCheck.IsChecked == true && tracks.Count > 0 && (carryApplied || audioEdited)){carryOver = tracks.ToList();}
+            carryApplied = audioEdited = false;
             foreach(TrackSettings t in tracks){t.Changed -= onAudioChanged;}
             tracks.Clear();
             lanes.Clear();
@@ -800,6 +818,7 @@ namespace ClipMixer{
 
         private void onAudioChanged(){
             if(suspendAudioEvents || !IsLoaded){return;}
+            audioEdited = true;
             updateAudioState();
             if(current != null && durationSec > 0 && inSec <= 0.05 && outSec >= durationSec - 0.05){updateCutInfo();}
             fxDebounce.Stop();
@@ -830,6 +849,7 @@ namespace ClipMixer{
                 return;
             }
 
+            bool carry = KeepAudioCheck.IsChecked == true;
             if(plan.IsPassthrough){
                 AudioPlanText.Text = n == 1 ? "Audio: copied as-is (lossless)." : $"Audio: all {n} tracks copied as-is (lossless).";
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, untouched)";
@@ -841,6 +861,11 @@ namespace ClipMixer{
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
                 if(plan.MixDown || plan.Tracks.Any(t => !t.Keep)){AudioPlanText.Foreground = (Brush)FindResource("WarnFg");}
             }
+            if(carry){
+                AudioPlanText.Text += carryOver != null && !carryApplied && carryOver.Count != n
+                    ? $"  (Your saved audio settings are for clips with {carryOver.Count} track(s), so they aren't used here.)"
+                    : "  These audio settings carry over to the next clips with the same tracks.";
+            }
         }
 
         private string? buildPreviewGraph(){
@@ -850,6 +875,11 @@ namespace ClipMixer{
         }
 
         private void audioOutputChanged(object sender, RoutedEventArgs e) => onAudioChanged();
+
+        private void keepAudioChanged(object sender, RoutedEventArgs e){
+            if(!IsLoaded){return;}
+            updateAudioState();
+        }
 
         private void audioExpanderChanged(object sender, RoutedEventArgs e){
             if(IsLoaded){settings.AudioPanelOpen = AudioExpander.IsExpanded;}
