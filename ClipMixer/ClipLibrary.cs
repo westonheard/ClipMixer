@@ -121,36 +121,62 @@ namespace ClipMixer{
             int done = 0;
             onProgress?.Invoke(0, candidates.Count);
 
-            foreach(string path in candidates){
-                ct.ThrowIfCancellationRequested();
-                FileInfo fi = new FileInfo(path);
-                if(!fi.Exists){continue;}
-
-                if(!cache.tryGet(path, fi.Length, fi.LastWriteTimeUtc, out bool trimmed, out double duration)){
-                    try{
-                        MediaInfo info = await runner.probeAsync(path, ct).ConfigureAwait(false);
-                        trimmed = ClipProcessor.isTrimTag(info.getTag("comment"));
-                        duration = info.DurationSeconds;
-                        cache.set(path, fi.Length, fi.LastWriteTimeUtc, trimmed, duration);
-                    }catch(OperationCanceledException){throw;}catch{
-                        //broken file, still list it so it can be deleted, but dont cache it
-                        trimmed = false;
-                        duration = 0;
+            //probes run in parallel but get handed out in sorted order so the list fills top down
+            ClipEntry?[] results = new ClipEntry?[candidates.Count];
+            bool[] finished = new bool[candidates.Count];
+            int nextToEmit = 0;
+            object emitLock = new object();
+            void Complete(int idx, ClipEntry? entry){
+                lock(emitLock){
+                    results[idx] = entry;
+                    finished[idx] = true;
+                    while(nextToEmit < finished.Length && finished[nextToEmit]){
+                        if(results[nextToEmit] is {} e){onClip(e);}
+                        nextToEmit++;
                     }
                 }
-
-                if(trimmed){summary.AlreadyTrimmed++;}else{summary.Untrimmed++;}
-                onClip(new ClipEntry{
-                    FullPath = path,
-                    RelativePath = Path.GetRelativePath(folder, path),
-                    SizeBytes = fi.Length,
-                    DurationSeconds = duration,
-                    ModifiedUtc = fi.LastWriteTimeUtc,
-                    IsTrimmed = trimmed,
-                });
-                onProgress?.Invoke(++done, candidates.Count);
             }
 
+            //using SemaphoreSlim gate = new SemaphoreSlim(4);
+            using SemaphoreSlim gate = new SemaphoreSlim(Math.Clamp(Environment.ProcessorCount / 2, 2, 6));
+            List<Task> tasks = candidates.Select(async (path, idx) => {
+                ClipEntry? found = null;
+                await gate.WaitAsync(ct).ConfigureAwait(false);
+                try{
+                    ct.ThrowIfCancellationRequested();
+                    FileInfo fi = new FileInfo(path);
+                    if(!fi.Exists){return;}
+
+                    if(!cache.tryGet(path, fi.Length, fi.LastWriteTimeUtc, out bool trimmed, out double duration)){
+                        try{
+                            MediaInfo info = await runner.probeAsync(path, ct).ConfigureAwait(false);
+                            trimmed = ClipProcessor.isTrimTag(info.getTag("comment"));
+                            duration = info.DurationSeconds;
+                            cache.set(path, fi.Length, fi.LastWriteTimeUtc, trimmed, duration);
+                        }catch(OperationCanceledException){throw;}catch{
+                            //broken file, still list it so it can be deleted, but dont cache it
+                            trimmed = false;
+                            duration = 0;
+                        }
+                    }
+
+                    if(trimmed){Interlocked.Increment(ref summary.AlreadyTrimmed);}else{Interlocked.Increment(ref summary.Untrimmed);}
+                    found = new ClipEntry{
+                        FullPath = path,
+                        RelativePath = Path.GetRelativePath(folder, path),
+                        SizeBytes = fi.Length,
+                        DurationSeconds = duration,
+                        ModifiedUtc = fi.LastWriteTimeUtc,
+                        IsTrimmed = trimmed,
+                    };
+                }finally{
+                    gate.Release();
+                    Complete(idx, found);
+                    onProgress?.Invoke(Interlocked.Increment(ref done), candidates.Count);
+                }
+            }).ToList();
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
             cache.save();
             return summary;
         }
