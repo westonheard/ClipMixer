@@ -111,7 +111,7 @@ namespace ClipMixer{
             updateAudioState();
             updateMarkerTexts();
             updateCounts();
-            status("Open a folder of clips to begin (Ctrl+O).");
+            status("Open a folder of clips to begin (Ctrl+O), or drag a folder onto the window.");
         }
 
         private void onLoaded(object sender, RoutedEventArgs e){
@@ -1044,7 +1044,7 @@ namespace ClipMixer{
             settings.save();
         }
 
-        //-------- keyboard / mouse --------
+        //-------- keyboard / mouse / drag drop --------
 
         private void windowPreviewKeyDown(object sender, KeyEventArgs e){
             if(menuOpen > 0){return;}//a popup menu is open, arrows/enter belong to it
@@ -1107,6 +1107,17 @@ namespace ClipMixer{
                 d = d is Visual || d is System.Windows.Media.Media3D.Visual3D ? VisualTreeHelper.GetParent(d) : LogicalTreeHelper.GetParent(d);
             }
             return null;
+        }
+
+        private void windowDragOver(object sender, DragEventArgs e){
+            e.Effects = e.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Link : DragDropEffects.None;
+            e.Handled = true;
+        }
+
+        private void windowDrop(object sender, DragEventArgs e){
+            if(e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0){return;}
+            string p = paths[0];
+            if(Directory.Exists(p)){_ = openFolderAsync(p, null);}else if(File.Exists(p)){_ = openFolderAsync(Path.GetDirectoryName(p)!, p);}
         }
 
         private async void onClosing(object? sender, CancelEventArgs e){

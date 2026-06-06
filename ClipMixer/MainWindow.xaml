@@ -6,6 +6,9 @@
         WindowStartupLocation="CenterScreen"
         Background="{StaticResource WindowBg}"
         Foreground="{StaticResource TextFg}"
+        AllowDrop="True"
+        Drop="windowDrop"
+        DragOver="windowDragOver"
         PreviewKeyDown="windowPreviewKeyDown"
         PreviewMouseDown="windowPreviewMouseDown">
 
@@ -67,7 +70,7 @@
                 <StackPanel Grid.Row="0">
                     <DockPanel LastChildFill="False">
                         <Button DockPanel.Dock="Left" Click="openFolderClick" Padding="12,5"
-                                ToolTip="Open a clip folder (Ctrl+O)">Open folder...</Button>
+                                ToolTip="Open a clip folder (Ctrl+O), or drag one onto the window">Open folder...</Button>
                         <Button DockPanel.Dock="Left" Margin="6,0,0,0" Click="refreshClick" Padding="10,5"
                                 ToolTip="Rescan folder">Refresh</Button>
                     </DockPanel>
