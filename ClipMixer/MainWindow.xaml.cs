@@ -61,6 +61,7 @@ namespace ClipMixer{
         private bool audioEdited;
         private readonly List<(string Path, CancellationTokenSource Cts, Task Task)> waveJobs = new();
         private readonly Dictionary<string, (long Size, DateTime Mtime, float[][] Peaks)> peakCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Queue<string> peakCacheOrder = new();
         private const int WaveBucketsPerSecond = 100;
         private int menuOpen;
 
@@ -992,7 +993,9 @@ namespace ClipMixer{
         }
 
         private void cachePeaks(string path, long size, DateTime mtime, float[][] peaks){
+            if(!peakCache.ContainsKey(path)){peakCacheOrder.Enqueue(path);}
             peakCache[path] = (size, mtime, peaks);
+            while(peakCacheOrder.Count > 30){peakCache.Remove(peakCacheOrder.Dequeue());}//todo: maybe cap by size instead of count
         }
 
         //stops the waveform readers (all, or just the one on path) and waits till ffmpeg exits so the file can be renamed/deleted
