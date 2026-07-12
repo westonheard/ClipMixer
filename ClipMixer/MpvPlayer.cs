@@ -44,6 +44,10 @@ namespace ClipMixer{
                     ["force-window"] = wid.HasValue ? "yes" : "no",
                     ["vo"] = wid.HasValue ? "gpu-next,gpu," : "null",
                     ["hwdec"] = "auto-safe",
+                    //broken nvidia recordings fail hw decode, then the software fallback reads garbage frame sizes and crashes
+                    //the whole app. took way too long to find this, so stay on hw (it just skips bad frames) + cap the size
+                    ["vd-lavc-software-fallback"] = "no",
+                    ["vd-lavc-o"] = "max_pixels=35389440",//8k (8192x4320)
                     ["hr-seek"] = "yes",
                     //mpv cant touch keys/mouse at all, q would just quit the player lol. wpf does all hotkeys
                     ["input-default-bindings"] = "no",
