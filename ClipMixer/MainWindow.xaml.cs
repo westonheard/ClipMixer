@@ -69,6 +69,12 @@ namespace ClipMixer{
         private double latestTime;
         private int timeUpdatePending;
 
+        private readonly object mpvLogLock = new();
+        private StreamWriter? mpvLog;
+        private long mpvLogBytes;
+        private const long MpvLogLimit = 20L << 20;
+        private int decodeErrors;//since current clip loaded, counted on mpvs thread
+
         public MainWindow(){
             InitializeComponent();
 
@@ -101,6 +107,7 @@ namespace ClipMixer{
             };
             Mpv.DurationChanged += d => Dispatcher.BeginInvoke(() => onMpvDuration(d));
             Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
+            Mpv.LogMessage += writeMpvLog;
             Mpv.GraphRejected += () => Dispatcher.BeginInvoke(() =>
                 status("The player couldn't apply the audio settings to this clip, so you're hearing it unprocessed."));
             WaveView.SeekRequested += t => seekTo(t);
@@ -118,6 +125,11 @@ namespace ClipMixer{
         private void onLoaded(object sender, RoutedEventArgs e){
             jobWorker = runJobsAsync();
             focusRoot();
+
+            try{
+                Directory.CreateDirectory(AppSettings.LogDir);
+                mpvLog = new StreamWriter(Path.Combine(AppSettings.LogDir, "mpv.log"), append: false) { AutoFlush = true };
+            }catch{}
 
             //give the video host a sec to make the player, then report problems / reopen last folder
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => {
@@ -362,6 +374,7 @@ namespace ClipMixer{
             }
 
             appliedGraph = buildPreviewGraph();
+            Interlocked.Exchange(ref decodeErrors, 0);
             Mpv.load(entry.FullPath, appliedGraph, null, AutoPlayCheck.IsChecked != true);
             updateCutInfo();
         }
@@ -446,6 +459,24 @@ namespace ClipMixer{
             if(inSec >= outSec){inSec = 0;}
             updateMarkerTexts();
             updateTimelineVisuals();
+        }
+
+        private void writeMpvLog(string line){
+            //damaged clip logs an error every frame, a few can trail in from the last clip so wait for 30
+            if(line.Contains("Error while decoding frame") && Interlocked.Increment(ref decodeErrors) == 30){
+                Dispatcher.BeginInvoke(() => status("This clip's video is damaged in places (the recording itself is corrupted), " +
+                    "so parts may look frozen or garbled. You can still trim a good part or delete it."));
+            }
+
+            lock(mpvLogLock){
+                //damaged clips spam thousands of lines a sec so cap the file
+                if(mpvLog == null || mpvLogBytes > MpvLogLimit){return;}
+                mpvLogBytes += line.Length + 14;//+ timestamp & newline, close enough
+                try{
+                    mpvLog.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {line}");
+                    if(mpvLogBytes > MpvLogLimit){mpvLog.WriteLine("(log size limit reached - nothing more is logged this session)");}
+                }catch{}
+            }
         }
 
         private void playPauseClick(object sender, RoutedEventArgs e) => togglePlay();
@@ -1146,6 +1177,7 @@ namespace ClipMixer{
             shutdownCts.Cancel();
             saveSettings();
             cache.save();
+            lock(mpvLogLock){try{mpvLog?.Dispose();}catch{} mpvLog = null;}
         }
 
         //-------- timeline --------
