@@ -4,6 +4,6 @@ obj/
 *.user
 *.suo
 
-# too big for github
+# too big for github, run setup.ps1
 ClipMixer/tools/
 ClipMixer/mpv/
