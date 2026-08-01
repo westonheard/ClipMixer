@@ -46,6 +46,9 @@ namespace ClipMixer{
         public int Candidates;
         public int Untrimmed;
         public int AlreadyTrimmed;
+        public int RestoredBackups;
+        public int LeftoverBackups;
+        public int TempFilesRemoved;
     }
 
     public enum ClipSortMode{Name, Newest, Oldest, Longest, Shortest, Largest}
@@ -103,6 +106,35 @@ namespace ClipMixer{
                 .ToList();
         }
 
+        //cut off the marker (+ any -N suffix) to get back the clip a work file belongs to
+        public static string originalPathForWorkFile(string workPath){
+            string dir = Path.GetDirectoryName(workPath)!;
+            string ext = Path.GetExtension(workPath);
+            string stem = Path.GetFileNameWithoutExtension(workPath);
+            foreach(string marker in new[]{ ClipProcessor.BackupMarker, ClipProcessor.TempMarker }){
+                int i = stem.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+                if(i >= 0){return Path.Combine(dir, stem.Substring(0, i) + ext);}
+            }
+            return workPath;
+        }
+
+        //cleanup after a crash mid trim, orphan backups go back, old temps get deleted. skip anything still active
+        public static void recoverWorkFiles(IEnumerable<string> allFiles, ISet<string> activePaths, ScanSummary summary){
+            foreach(string f in allFiles.Where(isWorkFile)){
+                string orig = originalPathForWorkFile(f);
+                if(activePaths.Contains(orig)){continue;}
+
+                try{
+                    if(Path.GetFileName(f).Contains(ClipProcessor.BackupMarker, StringComparison.OrdinalIgnoreCase)){
+                        if(!File.Exists(orig)){File.Move(f, orig); summary.RestoredBackups++;}else{summary.LeftoverBackups++;}
+                    }else{
+                        File.Delete(f);
+                        summary.TempFilesRemoved++;
+                    }
+                }catch{}//locked or no permission, just leave it
+            }
+        }
+
         //onClip fires from a worker thread per clip so the list fills in while its still scanning
         public static async Task<ScanSummary> scanAsync(
             string folder, bool recurse, FfmpegRunner runner, ClipCache cache, ISet<string> activePaths,
@@ -110,6 +142,10 @@ namespace ClipMixer{
             ScanSummary summary = new ScanSummary();
 
             List<string> all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
+            recoverWorkFiles(all, activePaths, summary);
+            if(summary.RestoredBackups > 0){
+                all = await Task.Run(() => enumerateVideos(folder, recurse), ct).ConfigureAwait(false);
+            }
 
             List<string> candidates = all
                 .Where(p => !isWorkFile(p) && !looksTrimmedByName(p) && !activePaths.Contains(p))

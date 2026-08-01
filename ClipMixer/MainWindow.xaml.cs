@@ -219,7 +219,10 @@ namespace ClipMixer{
                 if(current == null && clips.Count > 0){selectClip(clips.FirstOrDefault(c => !c.IsTrimmed) ?? clips[0]);}
 
                 oldNamedExports = Math.Max(0, summary.AlreadyTrimmed - allClips.Count(c => c.IsTrimmed));
-                updateCounts();
+                List<string> notes = new List<string>();
+                if(summary.RestoredBackups > 0){notes.Add($"{summary.RestoredBackups} original(s) restored from an interrupted trim");}
+                if(summary.LeftoverBackups > 0){notes.Add($"{summary.LeftoverBackups} leftover '{ClipProcessor.BackupMarker}' backup file(s) in the folder");}
+                updateCounts(notes.Count > 0 ? string.Join("; ", notes) : null);
 
                 if(!allClips.Any(c => !c.IsTrimmed)){
                     status(summary.Candidates == 0 && summary.AlreadyTrimmed == 0
@@ -291,13 +294,16 @@ namespace ClipMixer{
             rebuildClipList();
         }
 
-        private void updateCounts(){
+        private string? countsNote;
+        private void updateCounts(string? note = null){
+            if(note != null){countsNote = note;}
             int pending = jobs.Count(j => !j.IsFinished);
             int toReview = allClips.Count(c => !c.IsTrimmed);
             int trimmed = allClips.Count(c => c.IsTrimmed) + oldNamedExports;
             List<string> parts = new List<string> { toReview == 1 ? "1 clip to review" : $"{toReview} clips to review" };
             if(pending > 0){parts.Add($"{pending} processing");}
             if(trimmed > 0){parts.Add($"{trimmed} already trimmed{(ShowTrimmedCheck.IsChecked == true ? "" : " (hidden)")}");}
+            if(!string.IsNullOrEmpty(countsNote)){parts.Add(countsNote!);}
             ScanText.Text = folder == null ? "" : string.Join("  -  ", parts);
         }
 
