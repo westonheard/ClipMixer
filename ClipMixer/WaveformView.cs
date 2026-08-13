@@ -12,7 +12,7 @@ namespace ClipMixer{
         //peak 0..1 per bucket, null while its still loading
         public float[]? Peaks { get; set; }
         public double Gain { get; set; } = 1;
-        public bool Dimmed { get; set; }//track removed, draw it faded
+        public bool Dimmed { get; set; }//track removed or muted by solo, draw it faded
         public string? Note { get; set; }
     }
 

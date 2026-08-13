@@ -264,11 +264,12 @@ namespace ClipMixer{
         }
 
         //mpv lavfi-complex graph, [aid1].. in and [ao] out. mpv only plays 1 stream so everything gets mixed. null = play normal
-        public static string? buildPreview(AudioPlan plan){
+        public static string? buildPreview(AudioPlan plan, ICollection<int>? soloTracks = null){
             if(plan.Tracks.Count == 0){return null;}
-            if(plan.Tracks.Count == 1 && plan.IsPassthrough){return null;}
+            bool anySolo = soloTracks != null && soloTracks.Count > 0;
+            if(plan.Tracks.Count == 1 && plan.IsPassthrough && !anySolo){return null;}
 
-            List<TrackPlan> audible = plan.Tracks.Where(t => t.Keep).ToList();
+            List<TrackPlan> audible = plan.Tracks.Where(t => t.Keep && (!anySolo || soloTracks!.Contains(t.Index))).ToList();
             if(audible.Count == 0){return "[aid1]volume=0[ao]";}
             if(audible.Count == 1){
                 TrackPlan t = audible[0];
@@ -361,6 +362,7 @@ namespace ClipMixer{
 
         private double volume = 1;
         private bool keep = true;
+        private bool solo;
         private ChannelMode channel = ChannelMode.AsRecorded;
 
         public TrackSettings(int index, string label, string info, int channels){
@@ -398,6 +400,11 @@ namespace ClipMixer{
             set{if(set(ref keep, value)){notifyChanged();}}
         }
 
+        public bool Solo {//preview only, never exported
+            get => solo;
+            set{if(set(ref solo, value)){notifyChanged();}}
+        }
+
         public ChannelMode Channel {
             get => channel;
             set{if(set(ref channel, value)){raise(nameof(ChannelText)); notifyChanged();}}
@@ -422,7 +429,7 @@ namespace ClipMixer{
             Effects.Where(e => e.Enabled).Select(e => e.toPlan()).ToList(),
             Channels);
 
-        //copy settings from another track (for the next clip)
+        //copies everything but solo
         public void copyFrom(TrackSettings other){
             Volume = other.Volume;
             Keep = other.Keep;

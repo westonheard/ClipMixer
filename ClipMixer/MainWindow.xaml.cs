@@ -864,11 +864,13 @@ namespace ClipMixer{
         }
 
         private void updateAudioState(){
+            bool anySolo = tracks.Any(t => t.Solo);
             for(int i = 0; i < lanes.Count && i < tracks.Count; i++){
                 TrackSettings t = tracks[i];
                 lanes[i].Gain = t.Volume;
-                lanes[i].Dimmed = !t.Keep;
+                lanes[i].Dimmed = !t.Keep || (anySolo && !t.Solo);
                 lanes[i].Note = !t.Keep ? (MixDownRadio.IsChecked == true ? "left out of the mix" : "removed from the file")
+                    : anySolo && !t.Solo ? "muted by solo (preview only)"
                     : t.IsDefault ? null : t.toPlan().describe();
             }
             WaveView.refresh();
@@ -909,7 +911,8 @@ namespace ClipMixer{
         private string? buildPreviewGraph(){
             AudioPlan? plan = currentPlan();
             if(plan == null){return null;}
-            return AudioGraph.buildPreview(plan);
+            List<int> solo = tracks.Where(t => t.Solo).Select(t => t.Index).ToList();
+            return AudioGraph.buildPreview(plan, solo);
         }
 
         private void audioOutputChanged(object sender, RoutedEventArgs e) => onAudioChanged();
@@ -929,6 +932,7 @@ namespace ClipMixer{
                 foreach(TrackSettings t in tracks){
                     t.Volume = 1;
                     t.Keep = true;
+                    t.Solo = false;
                     t.Channel = ChannelMode.AsRecorded;
                     t.Effects.Clear();
                 }

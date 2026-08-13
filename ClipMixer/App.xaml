@@ -66,6 +66,33 @@
             <Setter Property="Padding" Value="16,9"/>
         </Style>
 
+        <Style TargetType="ToggleButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Foreground" Value="{StaticResource TextFg}"/>
+            <Setter Property="Background" Value="#34363E"/>
+            <Setter Property="BorderBrush" Value="#464852"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="1" CornerRadius="4" Padding="4,2">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#C08A2E"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#E0A84A"/>
+                            </Trigger>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style TargetType="RadioButton">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="Foreground" Value="{StaticResource TextFg}"/>

@@ -263,7 +263,7 @@
                             <Button Click="previewFxClick" Margin="0,0,0,4" Padding="8,3" ToolTip="Play 5s around the playhead">Preview 5s</Button>
                         </WrapPanel>
                         <TextBlock DockPanel.Dock="Top" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap" Margin="0,0,0,6"
-                                   Text="The player plays all kept tracks together. Effects run left to right."/>
+                                   Text="The player plays all kept tracks together. S (solo) only changes what you hear, not the file. Effects run left to right."/>
                         <ScrollViewer MaxHeight="250" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                             <ItemsControl x:Name="TrackList">
                                 <ItemsControl.ItemTemplate>
@@ -276,6 +276,8 @@
                                                         <TextBlock Text="{Binding Label}" FontWeight="SemiBold"/>
                                                     </CheckBox>
                                                     <TextBlock Text="{Binding Info}" Foreground="{StaticResource DimFg}" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,2"/>
+                                                    <ToggleButton IsChecked="{Binding Solo}" Content="S" Width="24" Margin="0,0,12,2"
+                                                                  ToolTip="Solo: hear only this track. Doesn't change the file."/>
                                                     <TextBlock Text="Volume" VerticalAlignment="Center" Margin="0,0,6,2"/>
                                                     <Slider Width="170" Minimum="0" Maximum="3" SmallChange="0.05" LargeChange="0.25" VerticalAlignment="Center"
                                                             Value="{Binding Volume, Mode=TwoWay}" Focusable="False" IsMoveToPointEnabled="True" Margin="0,0,6,2"
