@@ -157,8 +157,9 @@ namespace ClipMixer{
         public string describe() => Effects.get(Kind).Name;
     }
 
+    //StartOffset = how late the track starts (mic started late), only the player uses it, export goes by timestamps
     public sealed record TrackPlan(int Index, string Label, double Volume, bool Keep, ChannelMode Channel, IReadOnlyList<EffectPlan> Effects,
-        int Channels = 2){
+        int Channels = 2, double StartOffset = 0){
         public bool IsUntouched => Keep && Math.Abs(Volume - 1) < 1e-9 && Channel == ChannelMode.AsRecorded && Effects.Count == 0;
 
         //mono goes to both sides at full level, aformat upmix made it 3db quieter
@@ -217,8 +218,14 @@ namespace ClipMixer{
     }
 
     public static class AudioGraph{
+        //amix ignores timestamps so a late mic drifted out of sync, this pads the gaps w/ silence first
+        //dont use it in the player tho, mpv would pad silence all the way up to wherever u seek
+        private const string AlignToTimeline = "aresample=async=1:first_pts=0";
+
         //game + mic both loud = clipping when summed, so limit it
         private const string MixLimiter = "alimiter=limit=0.98:level=0:latency=1";
+
+        public const double LateStartThreshold = 0.03;//under 30ms u cant hear it
 
         private static string chain(string input, string output, IEnumerable<string> filters){
             List<string> list = filters.Where(f => !string.IsNullOrEmpty(f)).ToList();
@@ -239,11 +246,11 @@ namespace ClipMixer{
                 if(kept.Count == 0){return (null, outputs);}
                 if(kept.Count == 1){
                     TrackPlan t = kept[0];
-                    chains.Add(chain($"0:a:{t.Index}", "amixout", t.filters()
+                    chains.Add(chain($"0:a:{t.Index}", "amixout", new[] { AlignToTimeline }.Concat(t.filters())
                         .Append(t.StereoFilter)));
                 }else{
                     foreach(TrackPlan t in kept){
-                        chains.Add(chain($"0:a:{t.Index}", $"m{t.Index}", t.filters().Append(t.StereoFilter)));
+                        chains.Add(chain($"0:a:{t.Index}", $"m{t.Index}", new[] { AlignToTimeline }.Concat(t.filters()).Append(t.StereoFilter)));
                     }
                     chains.Add(string.Concat(kept.Select(t => $"[m{t.Index}]")) +
                                $"amix=inputs={kept.Count}:normalize=0:duration=longest,{MixLimiter}[amixout]");
@@ -256,7 +263,7 @@ namespace ClipMixer{
                         continue;
                     }
                     string label = $"aout{t.Index}";
-                    chains.Add(chain($"0:a:{t.Index}", label, t.filters()));
+                    chains.Add(chain($"0:a:{t.Index}", label, new[] { AlignToTimeline }.Concat(t.filters())));
                     outputs.Add(new OutputAudioTrack(new[] { t.Index }, label));
                 }
             }
@@ -278,8 +285,13 @@ namespace ClipMixer{
                 return chain($"aid{t.Index + 1}", "ao", f);
             }
 
+            //same as export. if a track starts late everything gets padded onto the timeline, but thats only right
+            //from where it loaded so the window reloads the file after a seek. what a pain this was
+            bool lateTrack = audible.Any(t => t.StartOffset > LateStartThreshold);
             List<string> chains = audible.Select(t => chain($"aid{t.Index + 1}", $"p{t.Index}",
-                t.filters().Append(t.StereoFilter))).ToList();
+                (lateTrack ? new[] { AlignToTimeline } : Array.Empty<string>())
+                    .Concat(t.filters())
+                    .Append(t.StereoFilter))).ToList();
             chains.Add(string.Concat(audible.Select(t => $"[p{t.Index}]")) +
                        $"amix=inputs={audible.Count}:normalize=0:duration=longest,{MixLimiter}[ao]");
             return string.Join(";", chains);
@@ -424,10 +436,10 @@ namespace ClipMixer{
 
         public bool IsDefault => Math.Abs(volume - 1) < 1e-9 && keep && channel == ChannelMode.AsRecorded && Effects.Count == 0;
 
-        public TrackPlan toPlan() => new(Index, Label, volume, keep,
+        public TrackPlan toPlan(double startOffset = 0) => new(Index, Label, volume, keep,
             CanChooseChannels ? channel : ChannelMode.AsRecorded,
             Effects.Where(e => e.Enabled).Select(e => e.toPlan()).ToList(),
-            Channels);
+            Channels, startOffset);
 
         //copies everything but solo
         public void copyFrom(TrackSettings other){

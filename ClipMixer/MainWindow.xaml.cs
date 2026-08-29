@@ -59,6 +59,7 @@ namespace ClipMixer{
         private List<TrackSettings>? carryOver;//settings reused on the next clip ("use for next clips")
         private bool carryApplied;
         private bool audioEdited;
+        private bool reloadAfterSeek;
         private readonly List<(string Path, CancellationTokenSource Cts, Task Task)> waveJobs = new();
         private readonly Dictionary<string, (long Size, DateTime Mtime, float[][] Peaks)> peakCache = new(StringComparer.OrdinalIgnoreCase);
         private readonly Queue<string> peakCacheOrder = new();
@@ -326,6 +327,7 @@ namespace ClipMixer{
             current = entry;
             this.info = null;
             appliedGraph = null;
+            reloadAfterSeek = false;
             durationSec = 0;
             inSec = outSec = playSec = 0;
             outUserSet = false;
@@ -499,6 +501,7 @@ namespace ClipMixer{
             playSec = Math.Clamp(sec, 0, Math.Max(0, durationSec));
             updatePlayheadVisual();
             Mpv.seek(playSec);
+            afterSeek();
         }
 
         private void setInClick(object sender, RoutedEventArgs e) => setIn(Mpv.getTimePosSeconds());
@@ -849,7 +852,9 @@ namespace ClipMixer{
 
         private AudioPlan? currentPlan(){
             if(info == null || tracks.Count != info.AudioTrackCount){return null;}
-            return new AudioPlan { MixDown = MixDownRadio.IsChecked == true, Tracks = tracks.Select(t => t.toPlan()).ToList() };
+            List<StreamInfo> streams = info.Streams.Where(s => s.CodecType == "audio").ToList();
+            double Offset(int i) => Math.Max(0, (streams[i].StartTime ?? info.StartTime) - info.StartTime);
+            return new AudioPlan { MixDown = MixDownRadio.IsChecked == true, Tracks = tracks.Select(t => t.toPlan(Offset(t.Index))).ToList() };
         }
 
         private bool AudioChanged => currentPlan() is { IsPassthrough: false };
@@ -913,6 +918,19 @@ namespace ClipMixer{
             if(plan == null){return null;}
             List<int> solo = tracks.Where(t => t.Solo).Select(t => t.Index).ToList();
             return AudioGraph.buildPreview(plan, solo);
+        }
+
+        //a late starting track (mic starts after game audio) only lines up from where the clip was loaded,
+        //so after a seek it gets reloaded at the new spot (debounced)
+        private bool PreviewHasLateTrack =>
+            currentPlan() is {} p && p.Tracks.Count(t => t.Keep) > 1 && p.Tracks.Any(t => t.StartOffset > AudioGraph.LateStartThreshold);
+
+        private void afterSeek(){
+            if(PreviewHasLateTrack){
+                reloadAfterSeek = true;
+                fxDebounce.Stop();
+                fxDebounce.Start();
+            }
         }
 
         private void audioOutputChanged(object sender, RoutedEventArgs e) => onAudioChanged();
@@ -1054,7 +1072,8 @@ namespace ClipMixer{
             //double pos = playSec;
             double pos = Mpv.getTimePosSeconds();
             string? graph = buildPreviewGraph();
-            if(graph == appliedGraph){return;}
+            if(graph == appliedGraph && !reloadAfterSeek){return;}
+            reloadAfterSeek = false;
             appliedGraph = graph;
             //changing the graph on a playing file glitches the video so just reload at the same spot
             Mpv.load(current.FullPath, graph, pos, Mpv.IsPaused);
@@ -1067,7 +1086,8 @@ namespace ClipMixer{
             double pe = Math.Min(outSec, ps + 5);
             string? graph = buildPreviewGraph();
             previewStopAtSec = pe;
-            if(graph != appliedGraph){
+            if(graph != appliedGraph || PreviewHasLateTrack){
+                reloadAfterSeek = false;
                 //a seek sent right after a reload just gets lost (took way too long to figure out), so the reload starts at the preview point
                 appliedGraph = graph;
                 Mpv.load(current.FullPath, graph, ps, false);
@@ -1110,8 +1130,8 @@ namespace ClipMixer{
                 case Key.Space: togglePlay(); break;
                 case Key.I: setIn(Mpv.getTimePosSeconds()); break;
                 case Key.O: setOut(Mpv.getTimePosSeconds()); break;
-                case Key.Left: if(current != null){Mpv.seekRelative(shift ? -1 : -5);} break;
-                case Key.Right: if(current != null){Mpv.seekRelative(shift ? 1 : 5);} break;
+                case Key.Left: if(current != null){Mpv.seekRelative(shift ? -1 : -5); afterSeek();} break;
+                case Key.Right: if(current != null){Mpv.seekRelative(shift ? 1 : 5); afterSeek();} break;
                 case Key.Home: seekTo(inSec); break;
                 case Key.Up: case Key.P: case Key.PageUp: navigate(-1); break;
                 case Key.Down: case Key.N: case Key.PageDown: navigate(+1); break;
