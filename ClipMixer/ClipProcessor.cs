@@ -104,13 +104,27 @@ namespace ClipMixer{
 
                 int expVideo = srcInfo.VideoTrackCount;//all video tracks get kept
                 AudioPlan? plan = req.Audio != null && req.Audio.IsPassthrough ? null : req.Audio;
-                (string? audioGraph, List<OutputAudioTrack> audioOut) = AudioGraph.buildExport(plan, srcInfo.AudioTrackCount);
+                //ffmpeg drops a track w/ no audio inside the cut (mic turned off earlier etc) so write those as silence instead
+                HashSet<int> emptyTracks = new HashSet<int>();
+                List<StreamInfo> srcAudioStreams = srcInfo.Streams.Where(s => s.CodecType == "audio").ToList();
+                for(int i = 0; i < srcAudioStreams.Count; i++){
+                    StreamInfo s = srcAudioStreams[i];
+                    if(!s.Duration.HasValue){continue;}
+                    double st = (s.StartTime ?? srcInfo.StartTime) - srcInfo.StartTime;
+                    if(Math.Min(cutEnd, st + s.Duration.Value) - Math.Max(seekRef, st) < 0.05){
+                        emptyTracks.Add(i);
+                        Log($"Audio track {i + 1} has no audio inside the cut; it's written as silence.");
+                    }
+                }
+                if(plan == null && emptyTracks.Count > 0){plan = AudioPlan.passthrough(srcInfo.AudioTrackCount);}
+                (string? audioGraph, List<OutputAudioTrack> audioOut) = AudioGraph.buildExport(plan, srcInfo.AudioTrackCount, emptyTracks);
 
                 ct.ThrowIfCancellationRequested();
                 if(File.Exists(tmp)){await FileOps.deleteAsync(tmp, false, ct).ConfigureAwait(false);}
                 tempIsOurs = true;
 
-                List<string> args = buildTrimArgs(src, tmp, seekRef, toEnd ? (double?)null : expectedDur,
+                //filtered audio gets padded w/ silence so it needs a real end even when cutting to the end
+                List<string> args = buildTrimArgs(src, tmp, seekRef, toEnd && audioGraph == null ? (double?)null : expectedDur,
                     req.PreciseCut, audioGraph, audioOut, srcInfo, expVideo > 0);
                 Log("ffmpeg " + string.Join(" ", args.Select(quote)));
                 progress?.Invoke("Exporting", 0);

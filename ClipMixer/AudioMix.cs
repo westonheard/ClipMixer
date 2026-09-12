@@ -225,6 +225,9 @@ namespace ClipMixer{
         //game + mic both loud = clipping when summed, so limit it
         private const string MixLimiter = "alimiter=limit=0.98:level=0:latency=1";
 
+        //pads to the end so an empty track still exists in the file, caller always passes -t so it stops
+        private const string PadToEnd = "apad";
+
         public const double LateStartThreshold = 0.03;//under 30ms u cant hear it
 
         private static string chain(string input, string output, IEnumerable<string> filters){
@@ -232,7 +235,9 @@ namespace ClipMixer{
             return $"[{input}]{(list.Count == 0 ? "anull" : string.Join(",", list))}[{output}]";
         }
 
-        public static (string? FilterComplex, List<OutputAudioTrack> Outputs) buildExport(AudioPlan? plan, int sourceAudioCount){
+        //caller has to pass -t if theres a graph (apad). emptyTracks get written as silence because ffmpeg just drops them
+        public static (string? FilterComplex, List<OutputAudioTrack> Outputs) buildExport(AudioPlan? plan, int sourceAudioCount,
+            ICollection<int>? emptyTracks = null){
             plan ??= AudioPlan.passthrough(sourceAudioCount);
             if(plan.Tracks.Count != sourceAudioCount){
                 throw new InvalidOperationException($"Audio settings are for {plan.Tracks.Count} track(s) but the clip has {sourceAudioCount}.");
@@ -247,23 +252,24 @@ namespace ClipMixer{
                 if(kept.Count == 1){
                     TrackPlan t = kept[0];
                     chains.Add(chain($"0:a:{t.Index}", "amixout", new[] { AlignToTimeline }.Concat(t.filters())
-                        .Append(t.StereoFilter)));
+                        .Append(t.StereoFilter).Append(PadToEnd)));
                 }else{
                     foreach(TrackPlan t in kept){
                         chains.Add(chain($"0:a:{t.Index}", $"m{t.Index}", new[] { AlignToTimeline }.Concat(t.filters()).Append(t.StereoFilter)));
                     }
                     chains.Add(string.Concat(kept.Select(t => $"[m{t.Index}]")) +
-                               $"amix=inputs={kept.Count}:normalize=0:duration=longest,{MixLimiter}[amixout]");
+                               $"amix=inputs={kept.Count}:normalize=0:duration=longest,{MixLimiter},{PadToEnd}[amixout]");
                 }
                 outputs.Add(new OutputAudioTrack(kept.Select(t => t.Index).ToArray(), "amixout"));
             }else{
                 foreach(TrackPlan t in kept){
-                    if(t.IsUntouched){
+                    //todo: skip the apad when the track already covers the whole cut
+                    if(t.IsUntouched && emptyTracks?.Contains(t.Index) != true){
                         outputs.Add(new OutputAudioTrack(new[] { t.Index }, null));
                         continue;
                     }
                     string label = $"aout{t.Index}";
-                    chains.Add(chain($"0:a:{t.Index}", label, new[] { AlignToTimeline }.Concat(t.filters())));
+                    chains.Add(chain($"0:a:{t.Index}", label, new[] { AlignToTimeline }.Concat(t.filters()).Append(PadToEnd)));
                     outputs.Add(new OutputAudioTrack(new[] { t.Index }, label));
                 }
             }
