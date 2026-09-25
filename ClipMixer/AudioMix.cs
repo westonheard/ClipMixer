@@ -167,6 +167,8 @@ namespace ClipMixer{
         public string StereoFilter => Channel != ChannelMode.AsRecorded || Channels == 1
             ? "pan=stereo|c0=c0|c1=c0" : "aformat=channel_layouts=stereo";
 
+        public bool NeedsLimiter => Volume > 1 + 1e-9;
+
         public List<string> filters(){
             List<string> f = new List<string>();
             string ch = ClipMixer.Effects.channelFilter(Channel);
@@ -230,6 +232,8 @@ namespace ClipMixer{
 
         public const double LateStartThreshold = 0.03;//under 30ms u cant hear it
 
+        private static IEnumerable<string> limit(TrackPlan t) => t.NeedsLimiter ? new[] { MixLimiter } : Array.Empty<string>();
+
         private static string chain(string input, string output, IEnumerable<string> filters){
             List<string> list = filters.Where(f => !string.IsNullOrEmpty(f)).ToList();
             return $"[{input}]{(list.Count == 0 ? "anull" : string.Join(",", list))}[{output}]";
@@ -251,7 +255,7 @@ namespace ClipMixer{
                 if(kept.Count == 0){return (null, outputs);}
                 if(kept.Count == 1){
                     TrackPlan t = kept[0];
-                    chains.Add(chain($"0:a:{t.Index}", "amixout", new[] { AlignToTimeline }.Concat(t.filters())
+                    chains.Add(chain($"0:a:{t.Index}", "amixout", new[] { AlignToTimeline }.Concat(t.filters()).Concat(limit(t))
                         .Append(t.StereoFilter).Append(PadToEnd)));
                 }else{
                     foreach(TrackPlan t in kept){
@@ -269,7 +273,7 @@ namespace ClipMixer{
                         continue;
                     }
                     string label = $"aout{t.Index}";
-                    chains.Add(chain($"0:a:{t.Index}", label, new[] { AlignToTimeline }.Concat(t.filters()).Append(PadToEnd)));
+                    chains.Add(chain($"0:a:{t.Index}", label, new[] { AlignToTimeline }.Concat(t.filters()).Concat(limit(t)).Append(PadToEnd)));
                     outputs.Add(new OutputAudioTrack(new[] { t.Index }, label));
                 }
             }
@@ -286,7 +290,7 @@ namespace ClipMixer{
             if(audible.Count == 0){return "[aid1]volume=0[ao]";}
             if(audible.Count == 1){
                 TrackPlan t = audible[0];
-                List<string> f = t.filters();
+                List<string> f = t.filters().Concat(limit(t)).ToList();
                 if(plan.MixDown){f.Add(t.StereoFilter);}
                 return chain($"aid{t.Index + 1}", "ao", f);
             }
@@ -297,6 +301,7 @@ namespace ClipMixer{
             List<string> chains = audible.Select(t => chain($"aid{t.Index + 1}", $"p{t.Index}",
                 (lateTrack ? new[] { AlignToTimeline } : Array.Empty<string>())
                     .Concat(t.filters())
+                    .Concat(plan.MixDown ? Array.Empty<string>() : limit(t))
                     .Append(t.StereoFilter))).ToList();
             chains.Add(string.Concat(audible.Select(t => $"[p{t.Index}]")) +
                        $"amix=inputs={audible.Count}:normalize=0:duration=longest,{MixLimiter}[ao]");
