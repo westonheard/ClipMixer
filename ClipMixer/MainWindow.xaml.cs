@@ -1132,6 +1132,8 @@ namespace ClipMixer{
                 case Key.O: setOut(Mpv.getTimePosSeconds()); break;
                 case Key.Left: if(current != null){Mpv.seekRelative(shift ? -1 : -5); afterSeek();} break;
                 case Key.Right: if(current != null){Mpv.seekRelative(shift ? 1 : 5); afterSeek();} break;
+                case Key.OemComma: if(current != null){Mpv.frameBackStep();} break;
+                case Key.OemPeriod: if(current != null){Mpv.frameStep();} break;
                 case Key.Home: seekTo(inSec); break;
                 case Key.Up: case Key.P: case Key.PageUp: navigate(-1); break;
                 case Key.Down: case Key.N: case Key.PageDown: navigate(+1); break;

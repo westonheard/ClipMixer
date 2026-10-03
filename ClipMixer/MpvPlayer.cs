@@ -158,6 +158,9 @@ namespace ClipMixer{
             command("seek", seconds.ToString("0.###", CultureInfo.InvariantCulture), "relative", "exact");
         }
 
+        public void frameStep() => command("frame-step");
+        public void frameBackStep() => command("frame-back-step");
+
         public double getTimePos() => tryGetDouble("time-pos", out double v) ? v : 0;
         public double getDuration() => tryGetDouble("duration", out double v) ? v : 0;
 

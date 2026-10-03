@@ -77,6 +77,8 @@ namespace ClipMixer{
         public bool IsPaused => Player?.IsPaused ?? true;
         public void seek(double seconds) => Player?.seek(seconds);
         public void seekRelative(double seconds) => Player?.seekRelative(seconds);
+        public void frameStep() => Player?.frameStep();
+        public void frameBackStep() => Player?.frameBackStep();
         public double getTimePosSeconds() => Player?.getTimePos() ?? 0;
 
         private const int WS_CHILD = 0x40000000;

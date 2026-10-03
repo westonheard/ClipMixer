@@ -352,7 +352,7 @@
             <StackPanel Grid.Row="7" Margin="0,8,0,0">
                 <TextBlock x:Name="StatusText" TextWrapping="Wrap"/>
                 <TextBlock Margin="0,4,0,0" FontSize="11" Foreground="{StaticResource DimFg}" TextWrapping="Wrap"
-                           Text="Keys:  Space play/pause  |  I / O set In / Out  |  Left/Right seek 5s (Shift 1s)  |  Home jump to In  |  Up/Down or P/N prev/next clip  |  Enter trim &amp; replace  |  Del delete  |  Ctrl+O open folder"/>
+                           Text="Keys:  Space play/pause  |  I / O set In / Out  |  Left/Right seek 5s (Shift 1s)  |  , . frame step  |  Home jump to In  |  Up/Down or P/N prev/next clip  |  Enter trim &amp; replace  |  Del delete  |  Ctrl+O open folder"/>
             </StackPanel>
         </Grid>
     </Grid>

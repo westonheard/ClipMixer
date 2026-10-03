@@ -32,6 +32,7 @@ if u wanna do it by hand:
 | space | play/pause |
 | i / o | set in / out |
 | left / right | seek 5s (shift = 1s) |
+| , . | frame step |
 | home | jump to in |
 | up/down or p/n | prev/next clip |
 | enter | trim + replace |
