@@ -41,26 +41,26 @@ namespace ClipMixer{
                     new ParamDef("bits", "Bits", 1, 16, 8, 1),
                     new ParamDef("downsample", "Downsample", 1, 50, 1, 1, "x"),
                 }),
-            new EffectDef(EffectKind.Waveshaper, "Waveshaper", "Shapes the waveform: soft, hard or sine curve.",
+            new EffectDef(EffectKind.Waveshaper, "Waveshaper", "Shapes the waveform with a soft, hard or sine curve.",
                 new[]{
                     new ParamDef("amount", "Amount", 0, 1, 0.5, 0.01),
                     new ParamDef("type", "Curve", 0, 2, 0, 1, "", new[] { "Soft", "Hard", "Sine" }),
                 }),
             new EffectDef(EffectKind.Fuzz, "Fuzz", "Heavy, lopsided clipping.",
                 new[] { new ParamDef("gain", "Gain", 0, 1, 0.5, 0.01) }),
-            new EffectDef(EffectKind.VoiceIsolation, "Voice isolation", "Cuts rumble and hiss outside the voice range and reduces steady background noise.",
+            new EffectDef(EffectKind.VoiceIsolation, "Voice isolation", "Cuts rumble, hiss and steady background noise around the voice.",
                 new[]{
                     new ParamDef("strength", "Strength", 0, 1, 0.5, 0.01),
                     new ParamDef("lowcut", "Low cut", 50, 1000, 120, 10, "Hz"),
                     new ParamDef("highcut", "High cut", 2000, 12000, 7000, 100, "Hz"),
                 }),
-            new EffectDef(EffectKind.NoiseGate, "Noise gate", "Silences the track while it's quieter than the threshold (keyboard, breathing, fans).",
+            new EffectDef(EffectKind.NoiseGate, "Noise gate", "Mutes the track while it's below the threshold (keyboard, breathing, fans).",
                 new[]{
                     new ParamDef("threshold", "Threshold", -70, -10, -40, 1, "dB"),
                     new ParamDef("attack", "Attack", 1, 100, 10, 1, "ms"),
                     new ParamDef("release", "Release", 10, 1000, 150, 10, "ms"),
                 }),
-            new EffectDef(EffectKind.Compressor, "Compressor", "Evens out the volume: turns down loud parts (shouting, explosions) above the threshold, then Make-up raises the whole track.",
+            new EffectDef(EffectKind.Compressor, "Compressor", "Evens out volume: turns down loud parts (shouting, explosions) above the threshold, then Make-up boosts the whole track.",
                 new[]{
                     new ParamDef("threshold", "Threshold", -60, 0, -24, 1, "dB"),
                     new ParamDef("ratio", "Ratio", 1, 20, 4, 0.5, ":1"),
@@ -144,9 +144,9 @@ namespace ClipMixer{
         };
 
         public static string channelName(ChannelMode mode) => mode switch{
-            ChannelMode.MonoMix => "Mono (left + right mixed)",
-            ChannelMode.LeftOnly => "Mono (left side only)",
-            ChannelMode.RightOnly => "Mono (right side only)",
+            ChannelMode.MonoMix => "Mono (left + right)",
+            ChannelMode.LeftOnly => "Mono (left only)",
+            ChannelMode.RightOnly => "Mono (right only)",
             _ => "Stereo (as recorded)",
         };
 
@@ -244,7 +244,7 @@ namespace ClipMixer{
             ICollection<int>? emptyTracks = null){
             plan ??= AudioPlan.passthrough(sourceAudioCount);
             if(plan.Tracks.Count != sourceAudioCount){
-                throw new InvalidOperationException($"Audio settings are for {plan.Tracks.Count} track(s) but the clip has {sourceAudioCount}.");
+                throw new InvalidOperationException($"Audio settings are for {plan.Tracks.Count} track(s), clip has {sourceAudioCount}.");
             }
 
             List<string> chains = new List<string>();

@@ -32,13 +32,13 @@ namespace ClipMixer{
                     if(h == IntPtr.Zero){
                         int err = Marshal.GetLastWin32Error();
                         throw new Win32Exception(err,
-                            $"LoadLibrary failed for mpv-1.dll. Win32Error={err}.\n" +
-                            $"Make sure ALL DLLs from your mpv build are in: {mpvDir}");
+                            $"Couldn't load mpv-1.dll (Win32 error {err}).\n" +
+                            $"Make sure all DLLs from your mpv build are in: {mpvDir}");
                     }
                 }else{
                     MessageBox.Show(
-                        $"mpv-1.dll not found.\nExpected at:\n{mpvDll}\n\n" +
-                        "Create a folder named 'mpv' next to ClipMixer.exe and put mpv-1.dll and its dependency DLLs there.",
+                        $"mpv-1.dll not found at:\n{mpvDll}\n\n" +
+                        "Put mpv-1.dll and its DLLs in an 'mpv' folder next to ClipMixer.exe.",
                         "ClipMixer",
                         MessageBoxButton.OK,
                         MessageBoxImage.Warning);
@@ -55,7 +55,7 @@ namespace ClipMixer{
 
         private void onDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e){
             string path = logCrash(e.Exception);
-            MessageBox.Show($"Something went wrong:\n\n{e.Exception.Message}\n\nDetails were saved to:\n{path}",
+            MessageBox.Show($"Something went wrong:\n\n{e.Exception.Message}\n\nDetails saved to:\n{path}",
                 "ClipMixer", MessageBoxButton.OK, MessageBoxImage.Error);
             e.Handled = true;//keep running, trims in the background still keep the originals safe
         }

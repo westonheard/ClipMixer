@@ -29,7 +29,7 @@ namespace ClipMixer{
         public MpvPlayer(IntPtr? wid, IDictionary<string, string>? options = null){
             mpv = mpv_create();
             if(mpv == IntPtr.Zero){
-                throw new Exception("mpv_create() failed. (mpv-1.dll not loaded or incompatible)");
+                throw new Exception("Couldn't start mpv (mpv-1.dll missing or incompatible).");
             }
 
             try{

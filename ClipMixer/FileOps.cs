@@ -40,13 +40,13 @@ namespace ClipMixer{
                 try{
                     await runStaAsync(() => recycleNow(path)).ConfigureAwait(false);
                     if(!File.Exists(path)){return;}
-                    last = new IOException("File still exists after sending it to the Recycle Bin.");
+                    last = new IOException("File still there after recycling.");
                 }catch(Exception ex){
                     last = ex;
                 }
                 await Task.Delay(250, ct).ConfigureAwait(false);
             }
-            throw new IOException($"Could not move to Recycle Bin: {Path.GetFileName(path)} ({last?.Message})", last);
+            throw new IOException($"Couldn't move to Recycle Bin: {Path.GetFileName(path)} ({last?.Message})", last);
         }
 
         //only local fixed drives have a recycle bin
@@ -133,6 +133,6 @@ namespace ClipMixer{
 
     public sealed class NoRecycleBinException : IOException{
         public NoRecycleBinException(string path)
-            : base($"This location has no Recycle Bin (network or removable drive): {Path.GetPathRoot(Path.GetFullPath(path))}"){}
+            : base($"No Recycle Bin on this drive (network or removable): {Path.GetPathRoot(Path.GetFullPath(path))}"){}
     }
 }

@@ -84,7 +84,7 @@ namespace ClipMixer{
                 MediaInfo srcInfo = await runner.probeAsync(src, ct).ConfigureAwait(false);
                 double srcDur = srcInfo.DurationSeconds;
                 Log($"Source duration={srcDur:0.###} start={srcInfo.StartTime:0.###} video={srcInfo.VideoTrackCount} audio={srcInfo.AudioTrackCount} codec={srcInfo.VideoCodec} fps={srcInfo.Fps:0.###}");
-                if(srcDur <= 0){throw new Exception("Could not read the clip's duration (file may be damaged).");}
+                if(srcDur <= 0){throw new Exception("Couldn't read the clip's duration (file may be damaged).");}
 
                 double inSec = Math.Clamp(req.InSec, 0, srcDur);
                 double outSec = Math.Clamp(req.OutSec, 0, srcDur);
@@ -158,7 +158,7 @@ namespace ClipMixer{
                 try{
                     await FileOps.retryAsync(() => File.Move(src, backup), ct).ConfigureAwait(false);
                 }catch(Exception ex) when(ex is IOException || ex is UnauthorizedAccessException){
-                    throw new Exception($"The original is in use by another program and couldn't be replaced (it was not changed): {ex.Message}");
+                    throw new Exception($"Original is in use by another program, left unchanged: {ex.Message}");
                 }
                 Log($"Original moved to backup: {backup}");
 
@@ -169,7 +169,7 @@ namespace ClipMixer{
                 }catch(Exception ex){
                     Log($"Moving temp into place failed: {ex.Message}. Restoring original.");
                     await restoreBackupAsync(backup, src, Log).ConfigureAwait(false);
-                    throw new Exception($"Couldn't put the trimmed file in place; the original was restored. ({ex.Message})");
+                    throw new Exception($"Couldn't swap in the trimmed file, original restored. ({ex.Message})");
                 }
 
                 try{
@@ -195,9 +195,9 @@ namespace ClipMixer{
                         await restoreBackupAsync(backup, src, Log).ConfigureAwait(false);
                         try{await FileOps.deleteAsync(failed, false).ConfigureAwait(false);}catch{}
                     }catch(Exception rex){
-                        throw new Exception($"Post-replace check failed and rollback failed. Your original is safe at: {backup} ({rex.Message})");
+                        throw new Exception($"Post-replace check and rollback both failed. Original is safe at: {backup} ({rex.Message})");
                     }
-                    throw new Exception($"Post-replace check failed; the original was restored. ({ex.Message})");
+                    throw new Exception($"Post-replace check failed, original restored. ({ex.Message})");
                 }
 
                 progress?.Invoke("Removing original", 0);
@@ -208,11 +208,11 @@ namespace ClipMixer{
                     }catch(NoRecycleBinException){
                         //trimmed file is verified + in place and they asked for a replace, so just delete it
                         await FileOps.deleteAsync(backup, false, CancellationToken.None).ConfigureAwait(false);
-                        warnings.Add("This drive has no Recycle Bin, so the original was deleted permanently.");
+                        warnings.Add("No Recycle Bin on this drive, original deleted permanently.");
                         Log("No Recycle Bin on this drive; original deleted permanently.");
                     }
                 }catch(Exception ex){
-                    warnings.Add($"Trim succeeded but the original couldn't be removed; it's still at {backup} ({ex.Message})");
+                    warnings.Add($"Trimmed, but couldn't remove the original. It's still at {backup} ({ex.Message})");
                     Log("Backup removal failed: " + ex.Message);
                 }
 
@@ -246,7 +246,7 @@ namespace ClipMixer{
                 log("Original restored.");
             }catch(Exception ex){
                 log($"RESTORE FAILED: {ex.Message}");
-                throw new Exception($"Couldn't move the original back into place. It is safe at: {backup} ({ex.Message})");
+                throw new Exception($"Couldn't move the original back. It's safe at: {backup} ({ex.Message})");
             }
         }
 
@@ -346,7 +346,7 @@ namespace ClipMixer{
             }
             void CheckStream(StreamInfo o, double need, string what){
                 if(o.Duration.HasValue && o.Duration.Value < need - tol){
-                    throw new VerificationException($"{what} is only {o.Duration.Value:0.00}s long; the original has {need:0.00}s in this section.");
+                    throw new VerificationException($"{what} is only {o.Duration.Value:0.00}s long, original has {need:0.00}s in this section.");
                 }
             }
 
@@ -394,9 +394,9 @@ namespace ClipMixer{
                 log("Export had decode errors; checking the same section of the original for comparison.");
                 DecodeResult srcDecode = await decodeCheckAsync(src, cutStart, cutEnd, new[] { "0:V?", "0:a?" }, expected, null, log, ct).ConfigureAwait(false);
                 if(srcDecode.Errors.Count < allErrors.Count){
-                    throw new VerificationException($"Export has decode errors not present in the original: {firstErrors(allErrors)}");
+                    throw new VerificationException($"Export has decode errors that aren't in the original: {firstErrors(allErrors)}");
                 }
-                warnings.Add($"The original clip has {srcDecode.Errors.Count} decode warning(s) in this section; the export matches it.");
+                warnings.Add($"Original has {srcDecode.Errors.Count} decode warning(s) in this section too, export matches it.");
             }
 
             return info;

@@ -53,7 +53,7 @@ namespace ClipMixer{
 
         public WaveformView(){
             Cursor = Cursors.Hand;
-            ToolTip = "Audio waveforms - click or drag to jump there";
+            ToolTip = "Waveforms - click or drag to seek";
         }
 
         public void setLanes(IReadOnlyList<WaveLane> lanes, string? message = null){

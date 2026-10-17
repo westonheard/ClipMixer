@@ -28,7 +28,7 @@ namespace ClipMixer{
                 0, 0, 100, 100, hwndParent.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
 
             if(hwnd == IntPtr.Zero){
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "Failed to create child window for mpv.");
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Couldn't create the video window.");
             }
 
             if(!DesignerProperties.GetIsInDesignMode(this)){//xaml designer makes one of these too and might not have mpv

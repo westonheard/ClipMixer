@@ -110,7 +110,7 @@ namespace ClipMixer{
             Mpv.PauseChanged += paused => Dispatcher.BeginInvoke(() => PlayPauseButton.Content = paused ? "Play" : "Pause");
             Mpv.LogMessage += writeMpvLog;
             Mpv.GraphRejected += () => Dispatcher.BeginInvoke(() =>
-                status("The player couldn't apply the audio settings to this clip, so you're hearing it unprocessed."));
+                status("Couldn't apply audio settings, playing unprocessed."));
             WaveView.SeekRequested += t => seekTo(t);
             WaveView.BucketsPerSecond = WaveBucketsPerSecond;
 
@@ -120,7 +120,7 @@ namespace ClipMixer{
             updateAudioState();
             updateMarkerTexts();
             updateCounts();
-            status("Open a folder of clips to begin (Ctrl+O), or drag a folder onto the window.");
+            status("Open a clip folder to start (Ctrl+O), or drag one onto the window.");
         }
 
         private void onLoaded(object sender, RoutedEventArgs e){
@@ -221,14 +221,14 @@ namespace ClipMixer{
 
                 oldNamedExports = Math.Max(0, summary.AlreadyTrimmed - allClips.Count(c => c.IsTrimmed));
                 List<string> notes = new List<string>();
-                if(summary.RestoredBackups > 0){notes.Add($"{summary.RestoredBackups} original(s) restored from an interrupted trim");}
-                if(summary.LeftoverBackups > 0){notes.Add($"{summary.LeftoverBackups} leftover '{ClipProcessor.BackupMarker}' backup file(s) in the folder");}
+                if(summary.RestoredBackups > 0){notes.Add($"{summary.RestoredBackups} original(s) restored from interrupted trim");}
+                if(summary.LeftoverBackups > 0){notes.Add($"{summary.LeftoverBackups} leftover '{ClipProcessor.BackupMarker}' backup(s) in folder");}
                 updateCounts(notes.Count > 0 ? string.Join("; ", notes) : null);
 
                 if(!allClips.Any(c => !c.IsTrimmed)){
                     status(summary.Candidates == 0 && summary.AlreadyTrimmed == 0
-                        ? "No video clips (.mp4 .mov .m4v .mkv) found in this folder."
-                        : "Nothing left to review in this folder.");
+                        ? "No video clips (.mp4 .mov .m4v .mkv) found here."
+                        : "Nothing left to review here.");
                 }
             }catch(OperationCanceledException){}catch(Exception ex){
                 if(!cts.IsCancellationRequested){
@@ -354,7 +354,7 @@ namespace ClipMixer{
             try{
                 info = await runner.probeAsync(entry.FullPath);
             }catch(Exception ex){
-                if(token == loadToken){status($"Couldn't read clip details ({ex.Message}). It may be damaged - you can still delete it.");}
+                if(token == loadToken){status($"Couldn't read clip ({ex.Message}). Might be damaged, you can still delete it.");}
             }
             if(token != loadToken){return;}
 
@@ -372,8 +372,8 @@ namespace ClipMixer{
                 if(!string.IsNullOrEmpty(entry.Folder)){bits.Add(entry.Folder);}
                 ClipInfoText.Text = string.Join("  |  ", bits);
                 status(entry.HasNote ? entry.Note!
-                    : entry.IsTrimmed ? "This clip was already trimmed by ClipMixer. You can trim it again or delete it."
-                    : "Set In (I) and Out (O), then Enter to trim - or Del to delete, N to skip.");
+                    : entry.IsTrimmed ? "Already trimmed. You can trim it again or delete it."
+                    : "Set In (I) and Out (O), Enter to trim. Del deletes, N skips.");
             }
 
             if(info != null){
@@ -412,7 +412,7 @@ namespace ClipMixer{
         private async Task goToIndexAfterRemovalAsync(int index){
             if(!clips.Any(c => !c.IsTrimmed)){
                 await clearCurrentAsync();
-                status(jobs.Any(j => !j.IsFinished) ? "All clips reviewed - waiting for trims to finish." : "All clips in this folder are reviewed.");
+                status(jobs.Any(j => !j.IsFinished) ? "All reviewed, waiting for trims to finish." : "All clips reviewed.");
                 return;
             }
             int start = Math.Clamp(index, 0, clips.Count - 1);
@@ -430,7 +430,7 @@ namespace ClipMixer{
             int idx = current != null ? clips.IndexOf(current) : -1;
             int target = idx < 0 ? 0 : idx + delta;
             if(target < 0 || target >= clips.Count){
-                status(delta > 0 ? "That was the last clip in the list." : "That's the first clip in the list.");
+                status(delta > 0 ? "That's the last clip." : "That's the first clip.");
                 return;
             }
             selectClip(clips[target]);
@@ -472,8 +472,8 @@ namespace ClipMixer{
         private void writeMpvLog(string line){
             //damaged clip logs an error every frame, a few can trail in from the last clip so wait for 30
             if(line.Contains("Error while decoding frame") && Interlocked.Increment(ref decodeErrors) == 30){
-                Dispatcher.BeginInvoke(() => status("This clip's video is damaged in places (the recording itself is corrupted), " +
-                    "so parts may look frozen or garbled. You can still trim a good part or delete it."));
+                Dispatcher.BeginInvoke(() => status("This clip's video is damaged in places, parts may look frozen or garbled. " +
+                    "You can still trim a good part or delete it."));
             }
 
             lock(mpvLogLock){
@@ -544,7 +544,7 @@ namespace ClipMixer{
             bool ok;
             try{ok = FfmpegRunner.tryParseTs(tb.Text, out ts);}catch{ok = false; ts = TimeSpan.Zero;}
             if(!ok){
-                status($"'{tb.Text}' isn't a valid time. Use 1:23.5, 00:01:23.500 or 83.5");
+                status($"Invalid time '{tb.Text}'. Use 1:23.5, 00:01:23.500 or 83.5");
                 updateMarkerTexts();
                 return;
             }
@@ -559,12 +559,12 @@ namespace ClipMixer{
 
             if(this.inSec <= 0.05 && outSec >= durationSec - 0.05){
                 CutInfoText.Text = AudioChanged
-                    ? "In/Out cover the whole clip: Enter keeps its full length and only applies the audio changes."
-                    : "In/Out cover the whole clip. Set In (I) and/or Out (O) to trim it.";
+                    ? "Whole clip selected: Enter only applies the audio changes."
+                    : "Whole clip selected. Set In (I) and/or Out (O) to trim.";
                 return;
             }
             if(PreciseCheck.IsChecked == true){
-                CutInfoText.Text = "Frame-accurate: the trimmed clip starts exactly at In (video is re-encoded to H.264).";
+                CutInfoText.Text = "Frame-accurate: starts exactly at In (re-encodes video to H.264).";
                 return;
             }
             if(this.inSec <= 0.0005){
@@ -576,7 +576,7 @@ namespace ClipMixer{
             double inSec = this.inSec;
             double startTime = info?.StartTime ?? 0;
             int token = ++keyframeToken;
-            CutInfoText.Text = "Finding the nearest keyframe...";
+            CutInfoText.Text = "Finding nearest keyframe...";
             _ = Task.Run(async () => {
                 try{
                     double k = await runner.getKeyframeAtOrBeforeAsync(path, inSec, startTime);
@@ -584,9 +584,9 @@ namespace ClipMixer{
                         if(token != keyframeToken || current?.FullPath != path){return;}
                         double diff = inSec - k;
                         if(diff < 0.05){
-                            CutInfoText.Text = "Lossless video cut (no re-encode). In is on a keyframe.";
+                            CutInfoText.Text = "Lossless cut (no re-encode), In is on a keyframe.";
                         }else{
-                            CutInfoText.Text = $"Lossless cut starts at the keyframe at {FfmpegRunner.formatTs(k)}  ({diff:0.00}s before In)." +
+                            CutInfoText.Text = $"Lossless cut starts at keyframe {FfmpegRunner.formatTs(k)} ({diff:0.00}s before In)." +
                                                (diff > 1 ? " Tick 'Frame-accurate start' for an exact start." : "");
                             if(diff > 1){CutInfoText.Foreground = (Brush)FindResource("WarnFg");}
                             KeyframeMarker.Tag = k;
@@ -611,17 +611,17 @@ namespace ClipMixer{
             ClipEntry? entry = current;
             if(deleting){return;}
             if(entry == null){status("No clip selected."); return;}
-            if(durationSec <= 0){status("This clip is still loading (or couldn't be read)."); return;}
+            if(durationSec <= 0){status("Clip is still loading (or couldn't be read)."); return;}
             if(outSec - inSec < 0.1){status("Out must be after In."); return;}
             AudioPlan? plan = currentPlan();
             bool audioChanged = plan != null && !plan.IsPassthrough;
             bool fullLength = inSec <= 0.05 && outSec >= durationSec - 0.05;
             if(fullLength && !audioChanged){
-                status("In/Out cover the whole clip - nothing to trim. Set In (I) / Out (O) first, or press N to skip.");
+                status("Whole clip selected, nothing to trim. Set In (I) / Out (O) first, or N to skip.");
                 return;
             }
             if(plan != null && plan.Tracks.Count > 0 && plan.OutputTrackCount == 0){
-                MessageBoxResult r = MessageBox.Show(this, "Every audio track is unticked, so the trimmed clip will have NO audio at all.\n\nTrim it without audio?",
+                MessageBoxResult r = MessageBox.Show(this, "All audio tracks are unticked, so the clip will have NO audio.\n\nTrim without audio?",
                     "No audio", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
                 if(r != MessageBoxResult.Yes || !ReferenceEquals(entry, current) || deleting){return;}
             }
@@ -648,23 +648,23 @@ namespace ClipMixer{
 
             jobQueue.Writer.TryWrite(job);
             status(fullLength
-                ? $"Queued: {entry.FileName}  (full length, audio changes only). It's replaced only after the new file is verified."
-                : $"Queued: {entry.FileName}  ({formatDur(keepLen)}). It's replaced only after the new file is verified.");
+                ? $"Queued: {entry.FileName} (full length, audio only). Replaced once the new file is verified."
+                : $"Queued: {entry.FileName} ({formatDur(keepLen)}). Replaced once the new file is verified.");
             updateCounts();
         }
 
         private async Task deleteCurrentAsync(){
             ClipEntry? entry = current;
             if(entry == null || deleting){return;}
-            if(!probeDone){status("Still loading this clip - try again in a moment."); return;}
+            if(!probeDone){status("Still loading, try again in a moment."); return;}
 
             bool recycle = RecycleCheck.IsChecked == true;
             bool canRecycle = recycle && FileOps.canRecycle(entry.FullPath);
             //no recycle bin (network/removable drive) so always ask, even w/ confirm off
             if(ConfirmDeleteCheck.IsChecked == true || (recycle && !canRecycle)){
-                string how = canRecycle ? "It will be moved to the Recycle Bin."
-                    : recycle ? "This drive has no Recycle Bin, so it will be PERMANENTLY deleted."
-                    : "It will be PERMANENTLY deleted.";
+                string how = canRecycle ? "It goes to the Recycle Bin."
+                    : recycle ? "No Recycle Bin on this drive, it'll be PERMANENTLY deleted."
+                    : "It'll be PERMANENTLY deleted.";
                 MessageBoxResult r = MessageBox.Show(this, $"Delete this clip?\n\n{entry.FileName}\n\n{how}",
                     "Delete clip", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
                 if(r != MessageBoxResult.Yes){return;}
@@ -693,7 +693,7 @@ namespace ClipMixer{
 
                 cache.remove(entry.FullPath);
                 removeClip(entry.FullPath);
-                status($"Deleted {entry.FileName}{(canRecycle ? " (in the Recycle Bin)" : " permanently")}.");
+                status($"Deleted {entry.FileName}{(canRecycle ? " (Recycle Bin)" : " permanently")}.");
             }catch(Exception ex){
                 status($"Couldn't delete {entry.FileName}: {ex.Message}");
             }finally{
@@ -831,8 +831,8 @@ namespace ClipMixer{
             }finally{suspendAudioEvents = false;}
 
             if(prev != null && !apply){
-                status($"Your carried-over audio settings are for clips with {prev.Count} audio track(s); this one has {audio.Count}, so it starts untouched. " +
-                       "They'll be used again on the next matching clip.");
+                status($"Saved audio settings are for {prev.Count} track(s) but this clip has {audio.Count}, so it starts untouched. " +
+                       "They'll apply on the next match.");
             }
 
             WaveView.setLanes(lanes, audio.Count > 0 ? "Loading waveforms..." : null);
@@ -890,7 +890,7 @@ namespace ClipMixer{
             int n = plan.Tracks.Count;
             if(n == 0){
                 AudioPlanText.Text = "This clip has no audio.";
-                AudioHeaderText.Text = "Audio tracks & effects (no audio in this clip)";
+                AudioHeaderText.Text = "Audio tracks & effects (no audio)";
                 return;
             }
 
@@ -900,7 +900,7 @@ namespace ClipMixer{
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, untouched)";
             }else{
                 List<string> parts = new List<string> { "Audio: " + plan.describe() + "." };
-                if(plan.OutputTrackCount == 0){parts.Add("The trimmed clip will have NO audio.");}else if(plan.MixDown){parts.Add("Mixing can't be undone once the original is replaced.");}
+                if(plan.OutputTrackCount == 0){parts.Add("Trimmed clip will have NO audio.");}else if(plan.MixDown){parts.Add("Mixing can't be undone once the original is replaced.");}
                 if(plan.Tracks.Any(t => t.Keep && !t.IsUntouched) || plan.MixDown){parts.Add("Changed audio is re-encoded (AAC 256 kbps).");}
                 AudioPlanText.Text = string.Join(" ", parts);
                 AudioHeaderText.Text = $"Audio tracks & effects ({n} track{(n == 1 ? "" : "s")}, CHANGED)";
@@ -908,8 +908,8 @@ namespace ClipMixer{
             }
             if(carry){
                 AudioPlanText.Text += carryOver != null && !carryApplied && carryOver.Count != n
-                    ? $"  (Your saved audio settings are for clips with {carryOver.Count} track(s), so they aren't used here.)"
-                    : "  These audio settings carry over to the next clips with the same tracks.";
+                    ? $"  (Saved audio settings are for {carryOver.Count} track(s), not used here.)"
+                    : "  These settings carry over to next clips with the same tracks.";
             }
         }
 
@@ -969,10 +969,10 @@ namespace ClipMixer{
             foreach(ChannelMode mode in Enum.GetValues<ChannelMode>()){
                 MenuItem item = new MenuItem { Header = Effects.channelName(mode), IsCheckable = true, IsChecked = mode == t.Channel };
                 item.ToolTip = mode switch{
-                    ChannelMode.MonoMix => "One channel, heard in both ears. Use for a mic or track that sounds lopsided.",
-                    ChannelMode.LeftOnly => "One channel made from the left side only (e.g. a mic that only records on the left).",
-                    ChannelMode.RightOnly => "One channel made from the right side only.",
-                    _ => "Keep the track as it was recorded.",
+                    ChannelMode.MonoMix => "One channel in both ears. For a mic or track that sounds lopsided.",
+                    ChannelMode.LeftOnly => "Left side only (e.g. a mic that only records on the left).",
+                    ChannelMode.RightOnly => "Right side only.",
+                    _ => "Keep it as recorded.",
                 };
                 item.Click += (_, __) => t.Channel = mode;
                 menu.Items.Add(item);
@@ -1192,7 +1192,7 @@ namespace ClipMixer{
                 if(busy > 0){
                     e.Cancel = true;
                     MessageBoxResult r = MessageBox.Show(this,
-                        $"{busy} clip(s) are still being trimmed.\n\nQuit anyway? Unfinished trims are cancelled and those originals are left untouched.",
+                        $"{busy} clip(s) still trimming.\n\nQuit anyway? Unfinished trims get cancelled and their originals stay untouched.",
                         "ClipMixer", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
                     if(r != MessageBoxResult.Yes){return;}
 
