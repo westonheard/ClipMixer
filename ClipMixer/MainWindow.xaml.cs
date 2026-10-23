@@ -136,6 +136,8 @@ namespace ClipMixer{
             Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() => {
                 if(Mpv.InitError != null){
                     status("Video preview unavailable: " + Mpv.InitError);
+                }else if(!File.Exists(runner.FfmpegPath) || !File.Exists(runner.FfprobePath)){
+                    status($"ffmpeg/ffprobe not found in {Path.GetDirectoryName(runner.FfmpegPath)}. Trimming won't work.");
                 }
 
                 string[] args = Environment.GetCommandLineArgs();
